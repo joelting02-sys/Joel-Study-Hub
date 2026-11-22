@@ -1,0 +1,63 @@
+@import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
+
+@layer base {
+  :root {
+    --font-sans: "Plus Jakarta Sans", "Noto Sans SC", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  }
+
+  body {
+    font-family: var(--font-sans);
+  }
+
+  code, pre, .font-mono {
+    font-family: var(--font-mono);
+  }
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Smooth clickable English word styling without disturbing punctuation spacing */
+.study-word {
+  border-radius: 0.25rem;
+  padding: 0 0.05em;
+  margin: 0 -0.05em;
+  transition: background-color 140ms cubic-bezier(0.16, 1, 0.3, 1), color 140ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.study-word:hover {
+  background-color: rgba(37, 99, 235, 0.14);
+}
+
+.dark .study-word:hover {
+  background-color: rgba(96, 165, 250, 0.22);
+}
+
+.study-word-glossary {
+  text-decoration-line: underline;
+  text-decoration-style: dotted;
+  text-decoration-color: rgba(37, 99, 235, 0.55);
+  text-underline-offset: 4px;
+}
+
+.dark .study-word-glossary {
+  text-decoration-color: rgba(96, 165, 250, 0.65);
+}
+
+.study-word-saved {
+  background-color: rgba(217, 119, 6, 0.14);
+}
+
+.dark .study-word-saved {
+  background-color: rgba(245, 158, 11, 0.18);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "name": "StudyHub",
+  "description": "Joel 的个人学习桌面软件：点词翻译、离线词典、本地单词库、AI 私教测验与间隔复习。",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

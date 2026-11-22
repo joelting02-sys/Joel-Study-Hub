@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>StudyHub — 个人英语与专业课学习工作台</title>
+    <meta name="description" content="Joel 的个人学习桌面软件：点词翻译、离线词典、本地单词库、AI 私教测验与间隔复习。" />
+    <meta property="og:title" content="StudyHub — 个人英语与专业课学习工作台" />
+    <meta property="og:description" content="Joel 的个人学习桌面软件：点词翻译、离线词典、本地单词库、AI 私教测验与间隔复习。" />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <script>
+      (function () {
+        try {
+          var desc = Object.getOwnPropertyDescriptor(window, 'fetch');
+          if (desc && desc.get && !desc.set && desc.configurable) {
+            Object.defineProperty(window, 'fetch', {
+              get: desc.get,
+              set: function () {},
+              configurable: true,
+              enumerable: Boolean(desc.enumerable),
+            });
+          }
+        } catch (_e) {}
+
+        window.addEventListener(
+          'error',
+          function (evt) {
+            var filename = evt && evt.filename ? String(evt.filename) : '';
+            var msg = evt && evt.message ? String(evt.message) : '';
+            if (
+              filename.indexOf('chrome-extension://') === 0 &&
+              msg.indexOf('Cannot set property fetch') !== -1
+            ) {
+              evt.preventDefault();
+              evt.stopImmediatePropagation();
+            }
+          },
+          true,
+        );
+      })();
+    </script>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Noto+Sans+SC:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+  <body class="bg-slate-50 text-slate-900 dark:bg-[#0B1120] dark:text-slate-100 antialiased selection:bg-blue-200 selection:text-slate-900 dark:selection:bg-blue-800 dark:selection:text-white">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
