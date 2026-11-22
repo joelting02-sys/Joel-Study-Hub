@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  verify:
+    name: Type-check, Test & Build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build Electron main bundle
+        run: npm run electron:build-main
+
+      - name: Type-check (tsc)
+        run: npm run lint
+
+      - name: Run unit & IPC contract tests
+        run: npm test
+
+      - name: Build frontend bundle
+        run: npm run build

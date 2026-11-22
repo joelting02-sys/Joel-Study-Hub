@@ -1,8 +1,12 @@
 node_modules/
 build/
 dist/
+release/
 coverage/
+StudyHub-Data/
+studyhub-config.json
 .DS_Store
+Thumbs.db
 *.log
 .env*
 !.env.example

@@ -6,14 +6,25 @@
 
 import express from 'express';
 import fs from 'fs';
+import http from 'http';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';
 import { StudyHubStorage, type StorageChangeEvent } from './server/storage.ts';
 
-const PORT = Number(process.env.PORT || 3000);
+function readCliArg(flag: string): string | undefined {
+  const idx = process.argv.indexOf(flag);
+  if (idx !== -1 && idx + 1 < process.argv.length) {
+    return process.argv[idx + 1];
+  }
+  return undefined;
+}
+
+const PORT = Number(readCliArg('--port') || process.env.PORT || 3000);
+const HOST = readCliArg('--host') || process.env.HOST || '0.0.0.0';
 
 async function startServer() {
   const app = express();
+  const httpServer = http.createServer(app);
   const storage = new StudyHubStorage();
 
   app.use(express.json({ limit: '50mb' }));
@@ -209,17 +220,31 @@ async function startServer() {
       res.sendFile(path.join(distDir, 'index.html'));
     });
   } else {
+    const hmrDisabled = process.env.DISABLE_HMR === 'true';
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: {
+        middlewareMode: true,
+        ws: hmrDisabled ? false : undefined,
+        hmr: hmrDisabled ? false : { server: httpServer },
+        watch: hmrDisabled ? null : undefined,
+      },
       appType: 'spa',
     });
     app.use(vite.middlewares);
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
+  httpServer.listen(PORT, HOST, () => {
     console.log(`[StudyHub] 服务已启动: http://localhost:${PORT}`);
     console.log(`[StudyHub] 数据目录: ${storage.getDataDir()}`);
   });
+
+  const shutdown = () => {
+    void storage.close().finally(() => {
+      httpServer.close(() => process.exit(0));
+    });
+  };
+  process.once('SIGTERM', shutdown);
+  process.once('SIGINT', shutdown);
 }
 
 startServer().catch((err) => {

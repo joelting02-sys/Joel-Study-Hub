@@ -12,10 +12,10 @@
     "preview": "vite preview",
     "electron:build-main": "esbuild electron/main.ts --bundle --platform=node --format=cjs --outfile=electron/main.cjs --external:electron",
     "electron:start": "npm run build && npm run electron:build-main && electron .",
-    "electron:pack": "npm run build && npm run electron:build-main && electron-builder --win nsis",
+    "electron:pack": "npm run build && npm run electron:build-main && electron-builder --win nsis portable --publish never",
     "clean": "rm -rf dist release server.js",
     "lint": "tsc --noEmit",
-    "test": "tsx --test src/lib/*.test.ts electron/*.test.ts"
+    "test": "tsx --test src/lib/dictionary.test.ts src/lib/vocabLogic.test.ts src/lib/quizLogic.test.ts electron/ipc.test.ts"
   },
   "build": {
     "appId": "com.joel.studyhub",
@@ -34,13 +34,22 @@
         {
           "target": "nsis",
           "arch": ["x64"]
+        },
+        {
+          "target": "portable",
+          "arch": ["x64"]
         }
       ]
     },
     "nsis": {
+      "artifactName": "StudyHub-Setup-${version}.exe",
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": true
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    },
+    "portable": {
+      "artifactName": "StudyHub-Portable-${version}.exe"
     }
   },
   "dependencies": {

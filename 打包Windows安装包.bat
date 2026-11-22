@@ -19,5 +19,5 @@ echo [3/3] 正在打包 Windows .exe 安装程序，请稍候...
 call npm run electron:pack
 
 echo.
-echo 打包完成！请打开项目目录中的 release\ 文件夹找到 StudyHub Setup .exe 安装程序。
+echo 打包完成！请打开项目目录中的 release\ 文件夹找到 StudyHub-Setup-*.exe（安装版）与 StudyHub-Portable-*.exe（便携版）。
 pause
