@@ -2,18 +2,25 @@ name: Release Windows (.exe)
 
 on:
   push:
+    branches:
+      - main
+      - master
     tags:
       - 'v*'
   workflow_dispatch:
     inputs:
       release_tag:
-        description: 'Release tag name (e.g. v1.0.0)'
-        required: true
-        default: 'v1.0.0'
+        description: 'Release tag name (leave empty to use v<package.json version>)'
+        required: false
+        default: ''
         type: string
 
 permissions:
   contents: write
+
+concurrency:
+  group: release-windows-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build-and-release-windows:
@@ -48,6 +55,16 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
         run: npm run electron:pack
 
+      - name: Verify .exe artifacts exist
+        shell: pwsh
+        run: |
+          $exes = Get-ChildItem -Path release -Filter "*.exe" -ErrorAction SilentlyContinue
+          if (-not $exes -or $exes.Count -eq 0) {
+            Write-Error "No .exe files found in release/ directory!"
+            exit 1
+          }
+          $exes | Format-Table Name, Length
+
       - name: Upload Windows .exe workflow artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -61,26 +78,36 @@ jobs:
         id: tag
         shell: pwsh
         run: |
-          if ("${{ github.event_name }}" -eq "workflow_dispatch") {
-            echo "name=${{ inputs.release_tag }}" >> $env:GITHUB_OUTPUT
+          $pkg = Get-Content -Raw -Path package.json | ConvertFrom-Json
+          $defaultTag = "v$($pkg.version)"
+          if ("${{ github.event_name }}" -eq "workflow_dispatch" -and "${{ inputs.release_tag }}".Trim() -ne "") {
+            $tagName = "${{ inputs.release_tag }}".Trim()
+          } elseif ("${{ github.ref_type }}" -eq "tag") {
+            $tagName = "${{ github.ref_name }}"
           } else {
-            echo "name=${{ github.ref_name }}" >> $env:GITHUB_OUTPUT
+            $tagName = $defaultTag
           }
+          Write-Host "Publishing GitHub Release tag: $tagName"
+          echo "name=$tagName" >> $env:GITHUB_OUTPUT
 
       - name: Publish to GitHub Releases
         uses: softprops/action-gh-release@v2
         with:
+          token: ${{ secrets.GITHUB_TOKEN }}
           tag_name: ${{ steps.tag.outputs.name }}
+          target_commitish: ${{ github.sha }}
           name: StudyHub ${{ steps.tag.outputs.name }} (Windows x64)
+          make_latest: true
+          fail_on_unmatched_files: true
           generate_release_notes: true
           body: |
             ## StudyHub Windows 桌面客户端 (${{ steps.tag.outputs.name }})
 
             纯原生 Electron 客户端（**零 localhost、零端口、零预设示例**），直接交给 AI Agent 读写本地文件夹协作。
 
-            ### 下载说明
-            - **`StudyHub-Setup-*.exe`**（推荐）：标准 Windows 安装程序，自动创建桌面快捷方式。
-            - **`StudyHub-Portable-*.exe`**：免安装便携版，双击即可直接运行。
+            ### 下载说明（点击下方 Assets 中的文件下载）
+            - **`StudyHub-Setup-*.exe`**（推荐）：标准 Windows 安装程序，可自定义目录并自动创建桌面快捷方式。
+            - **`StudyHub-Portable-*.exe`**：免安装便携版，下载后双击即可运行。
             - **`AGENT_GUIDE.md`**：AI Agent 接入协议文档（软件启动后也会自动生成到数据目录内）。
           files: |
             release/StudyHub-Setup-*.exe

@@ -20,6 +20,8 @@
   "build": {
     "appId": "com.joel.studyhub",
     "productName": "StudyHub",
+    "asar": true,
+    "npmRebuild": false,
     "directories": {
       "output": "release"
     },
@@ -27,7 +29,8 @@
       "dist/**/*",
       "electron/main.cjs",
       "electron/preload.cjs",
-      "package.json"
+      "package.json",
+      "!node_modules/**/*"
     ],
     "win": {
       "target": [

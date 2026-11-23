@@ -69,19 +69,13 @@ StudyHub/
 
 ## 🚀 如何在 GitHub 自动打包并发布 `.exe` 到 Releases
 
-本仓库已内置 GitHub Actions 自动化发布流水线 [`.github/workflows/release-windows.yml`](./.github/workflows/release-windows.yml)，无需本地环境即可在云端自动打包 Windows `.exe` 并发布到 **Releases** 页面：
+本仓库已配置 GitHub Actions 自动化发布流水线 [`.github/workflows/release-windows.yml`](./.github/workflows/release-windows.yml)，支持 **3 种触发方式** 自动在云端编译 Windows `.exe` 并上传到 **Releases**：
 
-### 方式 1：在 GitHub 网页一键触发（最简单，零命令行）
-1. 打开 GitHub 仓库顶部菜单 **Actions** → 左侧选择 **Release Windows (.exe)**。
-2. 点击右上角 **Run workflow**，输入版本号标签（例如 `v1.0.0`）并点击运行。
-3. 等待约 2–3 分钟构建完成后，打开仓库右侧 **Releases** 页面即可看到并下载 `StudyHub-Setup-1.0.0.exe` 与 `StudyHub-Portable-1.0.0.exe`。
+1. **推送代码到 `main` 自动发布（最省心）**：只要把代码推送到 `main` 分支，GitHub Actions 会自动在 `windows-latest` 环境打包并发布/更新对应 `package.json` 版本号（如 `v1.0.0`）的 **Release**，等待约 2–3 分钟即可在仓库右侧 **Releases** 页面下载 `.exe`。
+2. **在 GitHub 网页手动触发**：打开顶部 **Actions → Release Windows (.exe) → Run workflow** 即可立即构建发布。
+3. **标准 SemVer Tag 发布**：执行 `git tag v1.1.0 && git push origin v1.1.0` 发布新版本号的 Release。
 
-### 方式 2：推送 Git Tag 自动发布
-```bash
-git tag v1.0.0
-git push origin v1.0.0
-```
-GitHub Actions 会自动运行类型检查、单元测试、打包 Windows 安装版与便携版 `.exe`，并创建对应版本的 Release。
+> ⚠️ 如果 Actions 在发布阶段提示 `403 Resource not accessible by integration`，请进入 GitHub 仓库 **Settings → Actions → General → Workflow permissions**，勾选 **Read and write permissions** 并保存，然后重新运行一次 Workflow 即可。
 
 ---
 
