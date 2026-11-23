@@ -1,8 +1,8 @@
-# StudyHub — AI Agent Integration Guide
+# Joel Study Hub — AI Agent Integration Guide
 
-StudyHub is a local-first Windows desktop study client for Joel.
-**You (the AI Agent) interact with StudyHub exclusively through local files in the StudyHub data directory.**
-There is no login, no cloud database, and no HTTP API required on Windows. StudyHub watches this directory in real time (`chokidar`) and refreshes the UI automatically.
+Joel Study Hub is a blank, local-first Windows desktop study client designed to be populated directly by your local AI Agent.
+**You (the AI Agent) interact with Joel Study Hub exclusively through local files in the data directory.**
+There is no preset content, no login, no cloud database, and no HTTP API required on Windows. The app watches this directory in real time (`chokidar`) and refreshes the UI automatically.
 
 ---
 
@@ -34,7 +34,7 @@ Write UTF-8 JSON with the following structure:
 {
   "quiz_id": "<unique-slug-id>",
   "title": "<display title>",
-  "subject": "ICT | BE | ES | BO | 其他",
+  "subject": "<any subject or course name>",
   "pass_rate": 80,
   "glossary": {
     "<english term or multi-word phrase>": "<concise Chinese translation>"
@@ -47,7 +47,7 @@ Write UTF-8 JSON with the following structure:
       "options": ["<option A>", "<option B>", "<option C>", "<option D>"],
       "correct_index": 0,
       "explanation_zh": "<Chinese explanation shown after answering>",
-      "hint": "<optional hint shown when Joel clicks Hint>",
+      "hint": "<optional hint shown when clicking Hint>",
       "source": "<optional textbook chapter or reference>"
     },
     {
@@ -65,9 +65,9 @@ Write UTF-8 JSON with the following structure:
 ```
 
 ### Field Rules
-- `subject`: Must be one of `"ICT"`, `"BE"`, `"ES"`, `"BO"`, `"其他"` (other values automatically normalize to `"其他"`).
+- `subject`: Any subject/course string defined by the Agent (defaults to `"未分类"` if omitted). Subject filter tabs appear dynamically from your files.
 - `pass_rate`: Number 0–100 (defaults to `80` if omitted).
-- `glossary`: Optional key-value map of domain phrases (lowercase recommended). StudyHub prioritizes `glossary` with **longest-phrase match first** when Joel clicks any word in the quiz.
+- `glossary`: Optional key-value map of domain phrases (lowercase recommended). Click-to-translate prioritizes `glossary` with **longest-phrase match first**.
 - `questions[].type`: Only `"multiple_choice"` (4 options) or `"true_false"` (`["True", "False"]`).
 - `questions[].correct_index`: 0-based integer index into `options`.
 
@@ -87,7 +87,7 @@ Drop a JSON file into `vocab_inbox/` to recommend words/phrases for Joel's vocab
       "pos": "<optional part of speech, e.g. n. / v. / adj.>",
       "context": "<optional English sentence containing the word>",
       "source": "<optional source label>",
-      "subject": "ICT | BE | ES | BO | 其他"
+      "subject": "<any subject or course name>"
     }
   ]
 }
@@ -107,7 +107,7 @@ Generated automatically by StudyHub when Joel completes a quiz:
 {
   "quiz_id": "<quiz_id>",
   "title": "<title>",
-  "subject": "ICT | BE | ES | BO | 其他",
+  "subject": "<any subject or course name>",
   "finished_at": "<ISO-8601 timestamp>",
   "score": 8,
   "total": 10,
@@ -143,7 +143,7 @@ Generated automatically by StudyHub when Joel completes a quiz:
       "pos": "<part of speech>",
       "context": "<English sentence>",
       "source": "<source label>",
-      "subject": "ICT | BE | ES | BO | 其他",
+      "subject": "<any subject or course name>",
       "status": "learning | learned",
       "added_at": "<ISO-8601>",
       "learned_at": "<ISO-8601 | null>",

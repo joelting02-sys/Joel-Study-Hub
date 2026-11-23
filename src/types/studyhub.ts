@@ -3,9 +3,7 @@
  * 严格兼容 Joel 的本地 JSON 文件协议（供外部 AI 私教共同读写）
  */
 
-export type SubjectCode = 'ICT' | 'BE' | 'ES' | 'BO' | '其他';
-
-export const SUBJECT_OPTIONS: SubjectCode[] = ['ICT', 'BE', 'ES', 'BO', '其他'];
+export type SubjectCode = string;
 
 export type VocabStatus = 'learning' | 'learned';
 
@@ -142,4 +140,29 @@ export interface FolderStatus {
   exportExists: boolean;
   exportPath: string;
   lastSyncedAt: string;
+}
+
+export type UpdatePhase =
+  | 'idle'
+  | 'unsupported'
+  | 'checking'
+  | 'available'
+  | 'not-available'
+  | 'downloading'
+  | 'downloaded'
+  | 'error';
+
+export interface AppUpdateState {
+  currentVersion: string;
+  isPackaged: boolean;
+  isPortable: boolean;
+  supported: boolean;
+  phase: UpdatePhase;
+  latestVersion?: string;
+  percent?: number;
+  transferred?: number;
+  total?: number;
+  bytesPerSecond?: number;
+  message?: string;
+  repoUrl?: string;
 }

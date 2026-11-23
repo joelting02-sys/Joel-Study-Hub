@@ -31,11 +31,25 @@ contextBridge.exposeInMainWorld('studyhubIPC', {
   lookup: (surface, options) => ipcRenderer.invoke('studyhub:lookup', surface, options),
   importDictCsv: (filename, content) => ipcRenderer.invoke('studyhub:importDictCsv', filename, content),
 
+  getUpdateState: () => ipcRenderer.invoke('studyhub:getUpdateState'),
+  checkForUpdates: () => ipcRenderer.invoke('studyhub:checkForUpdates'),
+  downloadUpdate: () => ipcRenderer.invoke('studyhub:downloadUpdate'),
+  quitAndInstall: () => ipcRenderer.invoke('studyhub:quitAndInstall'),
+  openReleasesPage: () => ipcRenderer.invoke('studyhub:openReleasesPage'),
+
   onEvent: (callback) => {
     const listener = (_event, payload) => callback(payload);
     ipcRenderer.on('studyhub:event', listener);
     return () => {
       ipcRenderer.removeListener('studyhub:event', listener);
+    };
+  },
+
+  onUpdateStatus: (callback) => {
+    const listener = (_event, state) => callback(state);
+    ipcRenderer.on('studyhub:update-status', listener);
+    return () => {
+      ipcRenderer.removeListener('studyhub:update-status', listener);
     };
   },
 });

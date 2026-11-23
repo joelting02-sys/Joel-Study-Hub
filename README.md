@@ -1,8 +1,8 @@
 <div align="center">
 
-# StudyHub
+# Joel Study Hub
 
-**本地优先的 Windows 英语与专业课学习桌面客户端 · 专为 AI Agent 文件协作设计**
+**纯空白本地优先 Windows 桌面学习客户端 · 专为本地 AI Agent 文件协作设计**
 
 ![Platform](https://img.shields.io/badge/Platform-Windows%20x64-0078D6?logo=windows&logoColor=white)
 ![Electron](https://img.shields.io/badge/Electron-Pure%20IPC%20(No%20Localhost)-47848F?logo=electron&logoColor=white)
@@ -18,10 +18,10 @@
 ## ✨ 核心特性
 
 - **纯原生 Windows 桌面客户端**：基于 Electron 原生 IPC + 离线文件加载（`BrowserWindow.loadFile`），**不启动 localhost、不占用端口、无需浏览器、无需登录、无云数据库**。
-- **零预设示例，直接交给 Agent 使用**：启动后自动在数据根目录生成 [`AGENT_GUIDE.md`](./AGENT_GUIDE.md)，并在「设置」提供一键复制 Agent 接入指令；AI Agent 只需读写本地 JSON 文件即可出题、推词、读取成绩。
+- **彻底空白，零预设资料**：不内置任何预设测验、预设词条、预设文章或固定科目；科目筛选完全按你本地 Agent 写入的真实内容动态生成。启动后在数据目录自动生成 [`AGENT_GUIDE.md`](./AGENT_GUIDE.md) 供 Agent 直接接入。
 - **全局点词翻译（4 级优先级）**：测验 `glossary` 整组最长匹配优先 → 专有大写缩写（`IS` / `IT`） → 离线词典 ECDICT（含 `exchange` 词形还原，支持放入完整 `ecdict.csv`） → 手动录入中文。
 - **测验模式防误触交互**：点击选项内英文单词仅查词翻译，绝不触发作答；作答仅响应字母按钮 `A/B/C/D`、选项空白处或键盘 `1–4`；交卷自动写出 `results/<quiz_id>_<时间>.json`。
-- **单词库与间隔复习**：`学习中` / `已学会` 独立分页、重复点词自动累加 `lookup_count`、`1 → 3 → 7 → 14` 天间隔复习、每次变更原子写入 `vocab.json` 并自动同步导出 `exports/单词库.md`（适配 Obsidian / Anki）。
+- **单词库与间隔复习**：`学习中` / `已学会` 独立分页、重复点词自动累加 `lookup_count`、`1 → 3 → 7 → 14` 天间隔复习、每次变更原子写入 `vocab.json` 并自动同步导出 `exports/单词库.md`。
 - **实时文件监听与原子写入**：通过 `chokidar` 实时监听 `quizzes/`、`vocab_inbox/` 与 `dict/`，所有写操作均先写 `.tmp.` 临时文件再 `rename`，防止数据损坏。
 
 ---

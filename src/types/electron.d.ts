@@ -1,4 +1,5 @@
 import type {
+  AppUpdateState,
   FolderStatus,
   LookupResult,
   QuizFile,
@@ -48,7 +49,13 @@ export interface StudyHubIPCBridge {
     options?: { glossary?: Record<string, string>; matchedGlossaryKey?: string },
   ): Promise<LookupResult>;
   importDictCsv(filename: string, content: string): Promise<FolderStatus>;
+  getUpdateState(): Promise<AppUpdateState>;
+  checkForUpdates(): Promise<AppUpdateState>;
+  downloadUpdate(): Promise<AppUpdateState>;
+  quitAndInstall(): Promise<{ ok: boolean }>;
+  openReleasesPage(): Promise<{ ok: boolean; error?: string }>;
   onEvent(callback: (payload: StudyHubEventPayload) => void): () => void;
+  onUpdateStatus(callback: (state: AppUpdateState) => void): () => void;
 }
 
 declare global {

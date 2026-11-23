@@ -17,7 +17,6 @@ import {
   X,
 } from 'lucide-react';
 import type { SubjectCode, VocabEntry, VocabStatus } from '../types/studyhub';
-import { SUBJECT_OPTIONS } from '../types/studyhub';
 import { filterAndSortVocab } from '../lib/vocabLogic';
 
 interface VocabViewProps {
@@ -85,6 +84,13 @@ export const VocabView: React.FC<VocabViewProps> = ({
     () => words.filter((w) => w.status === 'learned').length,
     [words],
   );
+  const availableSubjects = useMemo(() => {
+    const seen = new Set<string>();
+    for (const w of words) {
+      if (w.subject) seen.add(w.subject);
+    }
+    return Array.from(seen);
+  }, [words]);
 
   const visibleWords = useMemo(
     () =>
@@ -204,19 +210,21 @@ export const VocabView: React.FC<VocabViewProps> = ({
             />
           </div>
 
-          <select
-            aria-label="按科目筛选"
-            value={subject}
-            onChange={(e) => setSubject(e.target.value as 'ALL' | SubjectCode)}
-            className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 focus:border-blue-500 focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
-          >
-            <option value="ALL">全部科目</option>
-            {SUBJECT_OPTIONS.map((s) => (
-              <option key={s} value={s}>
-                {s}
-              </option>
-            ))}
-          </select>
+          {availableSubjects.length > 0 && (
+            <select
+              aria-label="按科目筛选"
+              value={subject}
+              onChange={(e) => setSubject(e.target.value as 'ALL' | SubjectCode)}
+              className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 focus:border-blue-500 focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+            >
+              <option value="ALL">全部科目</option>
+              {availableSubjects.map((s) => (
+                <option key={s} value={s}>
+                  {s}
+                </option>
+              ))}
+            </select>
+          )}
 
           <select
             aria-label="排序方式"
@@ -237,7 +245,7 @@ export const VocabView: React.FC<VocabViewProps> = ({
             {activeTab === 'learning' ? '暂无「学习中」的单词' : '暂无「已学会」的单词'}
           </p>
           <p className="mt-1.5 text-sm text-slate-500 dark:text-slate-400">
-            在测验或阅读模式中点击英文单词即可随时加入单词库
+            在测验中点击英文单词，或由本地 Agent 写入 <span className="font-mono">vocab_inbox/</span> 即可自动加入单词库
           </p>
         </div>
       ) : (

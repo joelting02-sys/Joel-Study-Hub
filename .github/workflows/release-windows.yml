@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: 'Release tag name (leave empty to use v<package.json version>)'
+        description: 'Release tag name (e.g. v1.0.1; leave empty to use v<package.json version>)'
         required: false
         default: ''
         type: string
@@ -36,6 +36,46 @@ jobs:
         with:
           node-version: '20'
 
+      - name: Resolve release tag and version
+        id: tag
+        shell: pwsh
+        run: |
+          $pkg = Get-Content -Raw -Path package.json | ConvertFrom-Json
+          $defaultTag = "v$($pkg.version)"
+          if ("${{ github.event_name }}" -eq "workflow_dispatch" -and "${{ inputs.release_tag }}".Trim() -ne "") {
+            $tagName = "${{ inputs.release_tag }}".Trim()
+          } elseif ("${{ github.ref_type }}" -eq "tag") {
+            $tagName = "${{ github.ref_name }}"
+          } else {
+            $tagName = $defaultTag
+          }
+          $cleanVersion = $tagName -replace '^[vV]', ''
+          if ($cleanVersion -notmatch '^\d+\.\d+\.\d+') {
+            $cleanVersion = $pkg.version
+          }
+          Write-Host "Release tag: $tagName | App version: $cleanVersion"
+          echo "name=$tagName" >> $env:GITHUB_OUTPUT
+          echo "version=$cleanVersion" >> $env:GITHUB_OUTPUT
+
+      - name: Inject GitHub Releases auto-update publish config into package.json
+        shell: pwsh
+        run: |
+          node -e "
+            const fs = require('fs');
+            const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+            pkg.version = '${{ steps.tag.outputs.version }}';
+            pkg.build = pkg.build || {};
+            pkg.build.publish = [
+              {
+                provider: 'github',
+                owner: '${{ github.repository_owner }}',
+                repo: '${{ github.event.repository.name }}',
+                releaseType: 'release'
+              }
+            ];
+            fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
+          "
+
       - name: Install dependencies
         run: npm install
 
@@ -50,12 +90,16 @@ jobs:
           npm run lint
           npm test
 
-      - name: Build Windows installer & portable .exe
+      - name: Build Windows installer, portable .exe & auto-update metadata (latest.yml + blockmap)
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-        run: npm run electron:pack
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          npm run build
+          npm run electron:build-main
+          npx electron-builder --win nsis portable --publish always
 
-      - name: Verify .exe artifacts exist
+      - name: Verify .exe and latest.yml artifacts exist
         shell: pwsh
         run: |
           $exes = Get-ChildItem -Path release -Filter "*.exe" -ErrorAction SilentlyContinue
@@ -63,7 +107,11 @@ jobs:
             Write-Error "No .exe files found in release/ directory!"
             exit 1
           }
-          $exes | Format-Table Name, Length
+          if (-not (Test-Path "release/latest.yml")) {
+            Write-Error "release/latest.yml was not generated! Auto-update requires latest.yml."
+            exit 1
+          }
+          Get-ChildItem -Path release | Format-Table Name, Length
 
       - name: Upload Windows .exe workflow artifacts
         uses: actions/upload-artifact@v4
@@ -71,45 +119,34 @@ jobs:
           name: StudyHub-Windows-x64
           path: |
             release/StudyHub-Setup-*.exe
+            release/StudyHub-Setup-*.exe.blockmap
             release/StudyHub-Portable-*.exe
+            release/latest.yml
             AGENT_GUIDE.md
 
-      - name: Resolve release tag
-        id: tag
-        shell: pwsh
-        run: |
-          $pkg = Get-Content -Raw -Path package.json | ConvertFrom-Json
-          $defaultTag = "v$($pkg.version)"
-          if ("${{ github.event_name }}" -eq "workflow_dispatch" -and "${{ inputs.release_tag }}".Trim() -ne "") {
-            $tagName = "${{ inputs.release_tag }}".Trim()
-          } elseif ("${{ github.ref_type }}" -eq "tag") {
-            $tagName = "${{ github.ref_name }}"
-          } else {
-            $tagName = $defaultTag
-          }
-          Write-Host "Publishing GitHub Release tag: $tagName"
-          echo "name=$tagName" >> $env:GITHUB_OUTPUT
-
-      - name: Publish to GitHub Releases
+      - name: Publish Release notes & ensure all auto-update assets are attached
         uses: softprops/action-gh-release@v2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           tag_name: ${{ steps.tag.outputs.name }}
           target_commitish: ${{ github.sha }}
-          name: StudyHub ${{ steps.tag.outputs.name }} (Windows x64)
+          name: Joel Study Hub ${{ steps.tag.outputs.name }} (Windows x64)
           make_latest: true
           fail_on_unmatched_files: true
           generate_release_notes: true
           body: |
-            ## StudyHub Windows 桌面客户端 (${{ steps.tag.outputs.name }})
+            ## Joel Study Hub Windows 桌面客户端 (${{ steps.tag.outputs.name }})
 
-            纯原生 Electron 客户端（**零 localhost、零端口、零预设示例**），直接交给 AI Agent 读写本地文件夹协作。
+            纯原生 Electron 客户端（**零 localhost、零端口、零预设示例**），支持应用内通过 GitHub Releases 一键检查并升级。
 
             ### 下载说明（点击下方 Assets 中的文件下载）
-            - **`StudyHub-Setup-*.exe`**（推荐）：标准 Windows 安装程序，可自定义目录并自动创建桌面快捷方式。
+            - **`StudyHub-Setup-*.exe`**（推荐）：标准 Windows 安装程序，支持应用内「设置 → 检查更新」一键自动升级。
             - **`StudyHub-Portable-*.exe`**：免安装便携版，下载后双击即可运行。
-            - **`AGENT_GUIDE.md`**：AI Agent 接入协议文档（软件启动后也会自动生成到数据目录内）。
+            - **`latest.yml` & `*.blockmap`**：官方 `electron-updater` 自动更新校验与增量更新元数据文件（请勿删除）。
+            - **`AGENT_GUIDE.md`**：AI Agent 接入协议文档。
           files: |
             release/StudyHub-Setup-*.exe
+            release/StudyHub-Setup-*.exe.blockmap
             release/StudyHub-Portable-*.exe
+            release/latest.yml
             AGENT_GUIDE.md

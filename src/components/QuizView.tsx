@@ -25,7 +25,6 @@ import type {
   SubjectCode,
   VocabEntry,
 } from '../types/studyhub';
-import { SUBJECT_OPTIONS } from '../types/studyhub';
 import { gradeQuiz, type QuizGradeSummary } from '../lib/quizLogic';
 import { InteractiveText, type WordClickPayload } from './InteractiveText';
 
@@ -71,6 +70,14 @@ export const QuizView: React.FC<QuizViewProps> = ({
   const [importError, setImportError] = useState<string>('');
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const availableSubjects = useMemo(() => {
+    const seen = new Set<string>();
+    for (const q of quizzes) {
+      if (q.subject) seen.add(q.subject);
+    }
+    return Array.from(seen);
+  }, [quizzes]);
 
   const filteredQuizzes = useMemo(() => {
     if (subjectFilter === 'ALL') return quizzes;
@@ -650,44 +657,45 @@ export const QuizView: React.FC<QuizViewProps> = ({
         </div>
       )}
 
-      {/* 科目筛选分段按钮 */}
-      <div className="flex flex-wrap items-center gap-1 rounded-lg bg-slate-200/70 p-1 w-fit dark:bg-slate-800/80">
-        <button
-          type="button"
-          onClick={() => setSubjectFilter('ALL')}
-          className={`rounded-md px-3.5 py-1.5 text-sm font-medium transition-colors whitespace-nowrap ${
-            subjectFilter === 'ALL'
-              ? 'bg-white text-slate-900 shadow-xs dark:bg-slate-900 dark:text-slate-50'
-              : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100'
-          }`}
-        >
-          全部科目
-        </button>
-        {SUBJECT_OPTIONS.map((subj) => (
+      {/* 科目筛选分段按钮（仅当本地 Agent 写入测验后按实际科目动态显示） */}
+      {availableSubjects.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1 rounded-lg bg-slate-200/70 p-1 w-fit dark:bg-slate-800/80">
           <button
-            key={subj}
             type="button"
-            onClick={() => setSubjectFilter(subj)}
+            onClick={() => setSubjectFilter('ALL')}
             className={`rounded-md px-3.5 py-1.5 text-sm font-medium transition-colors whitespace-nowrap ${
-              subjectFilter === subj
+              subjectFilter === 'ALL'
                 ? 'bg-white text-slate-900 shadow-xs dark:bg-slate-900 dark:text-slate-50'
                 : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100'
             }`}
           >
-            {subj}
+            全部科目
           </button>
-        ))}
-      </div>
+          {availableSubjects.map((subj) => (
+            <button
+              key={subj}
+              type="button"
+              onClick={() => setSubjectFilter(subj)}
+              className={`rounded-md px-3.5 py-1.5 text-sm font-medium transition-colors whitespace-nowrap ${
+                subjectFilter === subj
+                  ? 'bg-white text-slate-900 shadow-xs dark:bg-slate-900 dark:text-slate-50'
+                  : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100'
+              }`}
+            >
+              {subj}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* 测验清单 */}
       {filteredQuizzes.length === 0 ? (
         <div className="rounded-xl border border-slate-200 bg-white p-10 text-center dark:border-slate-800 dark:bg-[#131C31]">
           <p className="text-base font-medium text-slate-800 dark:text-slate-200">
-            {quizzes.length === 0 ? '等待 Agent 写入测验' : '当前科目下还没有测验文件'}
+            {quizzes.length === 0 ? '暂无测验' : '当前科目下还没有测验'}
           </p>
           <p className="mt-1.5 text-sm text-slate-500 dark:text-slate-400">
-            StudyHub 正在实时监听本地 <span className="font-mono">quizzes/</span> 文件夹。将数据目录里的{' '}
-            <span className="font-mono">AGENT_GUIDE.md</span> 交给 Agent 后，Agent 写入测验 JSON 即可立即出现在此处（无需重启），也可点击右上角手动导入。
+            正在实时监听本地 <span className="font-mono">quizzes/</span> 目录，本地 Agent 写入测验 JSON 后会自动出现在这里。
           </p>
         </div>
       ) : (

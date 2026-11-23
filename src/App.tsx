@@ -7,7 +7,6 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  BookOpen,
   ClipboardCheck,
   Layers,
   Library,
@@ -19,6 +18,7 @@ import {
 } from 'lucide-react';
 import type {
   AppPreferences,
+  AppUpdateState,
   FolderStatus,
   QuizFile,
   QuizResultFile,
@@ -33,12 +33,11 @@ import {
   type ActiveLookupState,
 } from './components/WordLookupPopover';
 import { QuizView } from './components/QuizView';
-import { ReadingView } from './components/ReadingView';
 import { VocabView } from './components/VocabView';
 import { ReviewView } from './components/ReviewView';
 import { SettingsView } from './components/SettingsView';
 
-type NavTab = 'quiz' | 'reading' | 'vocab' | 'review' | 'settings';
+type NavTab = 'quiz' | 'vocab' | 'review' | 'settings';
 
 const PREFS_STORAGE_KEY = 'studyhub_preferences_v1';
 
@@ -73,6 +72,7 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string>('');
   const [liveBanner, setLiveBanner] = useState<string>('');
+  const [updateState, setUpdateState] = useState<AppUpdateState | null>(null);
 
   const [activeLookup, setActiveLookup] = useState<ActiveLookupState | null>(null);
 
@@ -119,7 +119,7 @@ export default function App() {
   useEffect(() => {
     void refreshAll();
 
-    return studyhubApi.subscribeEvents((data) => {
+    const unsubEvents = studyhubApi.subscribeEvents((data) => {
       if (data.type === 'quizzes_updated') {
         void studyhubApi.getQuizzes().then((r) => setQuizzes(r.quizzes)).catch(() => {});
         void studyhubApi.getStatus().then(setFolderStatus).catch(() => {});
@@ -137,6 +137,14 @@ export default function App() {
         setLiveBanner(data.message);
       }
     });
+
+    void studyhubApi.getUpdateState().then(setUpdateState).catch(() => {});
+    const unsubUpdate = studyhubApi.subscribeUpdateStatus(setUpdateState);
+
+    return () => {
+      unsubEvents();
+      unsubUpdate();
+    };
   }, [refreshAll]);
 
   // 自动淡出文件同步提示条
@@ -303,7 +311,6 @@ export default function App() {
     count?: number;
   }> = [
     { id: 'quiz', label: '测验', icon: ClipboardCheck, count: quizzes.length },
-    { id: 'reading', label: '阅读', icon: BookOpen },
     { id: 'vocab', label: '单词库', icon: Library, count: learningCount },
     { id: 'review', label: '复习', icon: Layers, count: dueReviewCount },
     { id: 'settings', label: '设置', icon: Settings },
@@ -329,7 +336,7 @@ export default function App() {
             <Menu className="h-5 w-5" />
           </button>
           <span className="text-lg font-bold tracking-tight text-slate-900 whitespace-nowrap dark:text-slate-50">
-            StudyHub
+            Joel Study Hub
           </span>
         </div>
 
@@ -366,7 +373,7 @@ export default function App() {
       >
         <div className="flex h-16 items-center justify-between border-b border-slate-200 px-5 dark:border-slate-800">
           <span className="text-xl font-bold tracking-tight text-slate-900 whitespace-nowrap dark:text-slate-50">
-            StudyHub
+            Joel Study Hub
           </span>
           <button
             type="button"
@@ -403,6 +410,13 @@ export default function App() {
                     {item.count}
                   </span>
                 )}
+                {item.id === 'settings' &&
+                  (updateState?.phase === 'available' || updateState?.phase === 'downloaded') && (
+                    <span
+                      aria-label="发现新版本"
+                      className="h-2 w-2 rounded-full bg-blue-600 dark:bg-blue-400"
+                    />
+                  )}
               </button>
             );
           })}
@@ -485,14 +499,6 @@ export default function App() {
               />
             )}
 
-            {activeTab === 'reading' && (
-              <ReadingView
-                vocabLookupMap={vocabLookupMap}
-                fontScale={preferences.fontScale}
-                onWordClick={(p) => void handleWordClick(p)}
-              />
-            )}
-
             {activeTab === 'vocab' && (
               <VocabView
                 words={words}
@@ -519,6 +525,17 @@ export default function App() {
                 results={results}
                 preferences={preferences}
                 isDesktopClient={studyhubApi.isDesktopClient()}
+                updateState={updateState}
+                onCheckForUpdates={async () => {
+                  const next = await studyhubApi.checkForUpdates();
+                  setUpdateState(next);
+                }}
+                onDownloadUpdate={async () => {
+                  const next = await studyhubApi.downloadUpdate();
+                  setUpdateState(next);
+                }}
+                onQuitAndInstall={() => studyhubApi.quitAndInstall()}
+                onOpenReleasesPage={() => studyhubApi.openReleasesPage()}
                 onUpdatePreferences={updatePreferences}
                 onChangeDataDir={handleChangeDataDir}
                 onPickDataDir={async () => {

@@ -5,6 +5,7 @@
  */
 
 import type {
+  AppUpdateState,
   FolderStatus,
   LookupResult,
   QuizFile,
@@ -231,5 +232,50 @@ export const studyhubApi = {
     return () => {
       es?.close();
     };
+  },
+
+  async getUpdateState(): Promise<AppUpdateState> {
+    const ipc = getIpc();
+    if (ipc?.getUpdateState) return ipc.getUpdateState();
+    return {
+      currentVersion: '1.0.0',
+      isPackaged: false,
+      isPortable: false,
+      supported: false,
+      phase: 'unsupported',
+      message: '仅 Windows 安装版客户端（StudyHub-Setup-*.exe）支持在应用内直接通过 GitHub Releases 升级。',
+    };
+  },
+
+  async checkForUpdates(): Promise<AppUpdateState> {
+    const ipc = getIpc();
+    if (ipc?.checkForUpdates) return ipc.checkForUpdates();
+    return this.getUpdateState();
+  },
+
+  async downloadUpdate(): Promise<AppUpdateState> {
+    const ipc = getIpc();
+    if (ipc?.downloadUpdate) return ipc.downloadUpdate();
+    return this.getUpdateState();
+  },
+
+  async quitAndInstall(): Promise<{ ok: boolean }> {
+    const ipc = getIpc();
+    if (ipc?.quitAndInstall) return ipc.quitAndInstall();
+    return { ok: false };
+  },
+
+  async openReleasesPage(): Promise<{ ok: boolean; error?: string }> {
+    const ipc = getIpc();
+    if (ipc?.openReleasesPage) return ipc.openReleasesPage();
+    return { ok: false, error: '仅桌面客户端支持直接打开外部浏览器' };
+  },
+
+  subscribeUpdateStatus(onUpdate: (state: AppUpdateState) => void): () => void {
+    const ipc = getIpc();
+    if (ipc?.onUpdateStatus) {
+      return ipc.onUpdateStatus(onUpdate);
+    }
+    return () => {};
   },
 };

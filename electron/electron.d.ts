@@ -41,6 +41,8 @@ declare module 'electron' {
     static getAllWindows(): BrowserWindow[];
   }
   export const app: {
+    readonly isPackaged: boolean;
+    getVersion(): string;
     requestSingleInstanceLock(): boolean;
     quit(): void;
     whenReady(): Promise<void>;
@@ -60,5 +62,6 @@ declare module 'electron' {
   };
   export const shell: {
     openPath(fullPath: string): Promise<string>;
+    openExternal(url: string): Promise<void>;
   };
 }

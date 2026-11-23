@@ -8,7 +8,6 @@ import type {
   VocabInboxItem,
   VocabStatus,
 } from '../types/studyhub.ts';
-import { SUBJECT_OPTIONS } from '../types/studyhub.ts';
 
 /** 记忆曲线间隔阶梯：1 -> 3 -> 7 -> 14 天 */
 export const REVIEW_INTERVAL_STEPS = [1, 3, 7, 14] as const;
@@ -18,12 +17,8 @@ export function normalizeWordKey(word: string): string {
 }
 
 export function normalizeSubject(subject?: string): SubjectCode {
-  if (!subject) return '其他';
-  const upper = subject.trim().toUpperCase();
-  if (upper === 'ICT' || upper === 'BE' || upper === 'ES' || upper === 'BO') {
-    return upper;
-  }
-  return SUBJECT_OPTIONS.includes(subject as SubjectCode) ? (subject as SubjectCode) : '其他';
+  const trimmed = subject?.trim();
+  return trimmed ? trimmed : '未分类';
 }
 
 /**
@@ -177,8 +172,8 @@ export function mergeInboxWords(
         phonetic: item.phonetic ?? '',
         pos: item.pos ?? '',
         context: item.context ?? '',
-        source: item.source ?? 'AI 私教推荐',
-        subject: item.subject ?? '其他',
+        source: item.source ?? 'Agent',
+        subject: item.subject ?? '未分类',
       },
       options,
     );
@@ -260,7 +255,7 @@ export function exportVocabToMarkdown(words: VocabEntry[]): string {
     (val || '').replace(/\|/g, '\\|').replace(/\r?\n/g, ' ').trim();
 
   const header = [
-    '# StudyHub 单词库',
+    '# Joel Study Hub 单词库',
     '',
     `> 共 ${words.length} 词 · 学习中 ${words.filter((w) => w.status === 'learning').length} · 已学会 ${words.filter((w) => w.status === 'learned').length}`,
     '',

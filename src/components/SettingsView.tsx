@@ -13,16 +13,20 @@ import {
   CheckCircle2,
   Copy,
   Database,
+  Download,
   ExternalLink,
   FolderOpen,
   FolderSearch,
   Inbox,
   Moon,
+  RefreshCw,
+  RotateCw,
   Sun,
   Upload,
 } from 'lucide-react';
 import type {
   AppPreferences,
+  AppUpdateState,
   FolderStatus,
   FontScale,
   QuizResultFile,
@@ -33,6 +37,11 @@ interface SettingsViewProps {
   results: QuizResultFile[];
   preferences: AppPreferences;
   isDesktopClient: boolean;
+  updateState: AppUpdateState | null;
+  onCheckForUpdates: () => Promise<void>;
+  onDownloadUpdate: () => Promise<void>;
+  onQuitAndInstall: () => Promise<{ ok: boolean }>;
+  onOpenReleasesPage: () => Promise<{ ok: boolean; error?: string }>;
   onUpdatePreferences: (patch: Partial<AppPreferences>) => void;
   onChangeDataDir: (dir: string) => Promise<void>;
   onPickDataDir: () => Promise<void>;
@@ -46,6 +55,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   results,
   preferences,
   isDesktopClient,
+  updateState,
+  onCheckForUpdates,
+  onDownloadUpdate,
+  onQuitAndInstall,
+  onOpenReleasesPage,
   onUpdatePreferences,
   onChangeDataDir,
   onPickDataDir,
@@ -69,7 +83,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     const activeDir = status?.dataDir || status?.defaultWindowsDir || 'C:\\Users\\joelt\\Documents\\StudyHub';
     const guideFile = `${activeDir}${activeDir.includes('\\') ? '\\' : '/'}AGENT_GUIDE.md`;
     const handoffText = [
-      '请作为我的 StudyHub 学习 Agent，直接通过本地文件夹与我的 StudyHub 桌面软件协作。',
+      '请作为我的 Joel Study Hub 本地学习 Agent，直接通过本地文件夹与 Joel Study Hub 桌面软件协作。',
       `数据根目录：${activeDir}`,
       `完整协议文档：请先读取 ${guideFile}，严格遵守里面的 JSON 格式与读写权限：`,
       '- 写入测验：写入 quizzes/<quiz_id>.json（先写 .tmp. 再 rename），软件实时监听自动刷新',
@@ -151,10 +165,105 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         </p>
       </div>
 
+      {/* 软件更新（官方 electron-updater + GitHub Releases） */}
+      <section
+        data-testid="settings-updater-section"
+        className="space-y-4 rounded-xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-[#131C31]"
+      >
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <RefreshCw className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+            <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">
+              软件更新
+            </h2>
+            <span className="font-mono text-xs text-slate-500 dark:text-slate-400">
+              当前版本 v{updateState?.currentVersion || '1.0.0'}
+            </span>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            {updateState?.repoUrl && (
+              <button
+                type="button"
+                onClick={() => void onOpenReleasesPage()}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3.5 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50 whitespace-nowrap dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+              >
+                <ExternalLink className="h-4 w-4" />
+                <span>GitHub Releases</span>
+              </button>
+            )}
+
+            {updateState?.phase === 'available' ? (
+              <button
+                type="button"
+                onClick={() => void onDownloadUpdate()}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-blue-700 whitespace-nowrap dark:bg-blue-500 dark:hover:bg-blue-600"
+              >
+                <Download className="h-4 w-4" />
+                <span>立即下载升级 (v{updateState.latestVersion})</span>
+              </button>
+            ) : updateState?.phase === 'downloaded' ? (
+              <button
+                type="button"
+                onClick={() => void onQuitAndInstall()}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-emerald-700 whitespace-nowrap dark:bg-emerald-500 dark:hover:bg-emerald-600"
+              >
+                <RotateCw className="h-4 w-4" />
+                <span>立即重启并安装 v{updateState.latestVersion}</span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                disabled={
+                  !updateState?.supported ||
+                  updateState.phase === 'checking' ||
+                  updateState.phase === 'downloading'
+                }
+                onClick={() => void onCheckForUpdates()}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-blue-700 disabled:opacity-50 whitespace-nowrap dark:bg-blue-500 dark:hover:bg-blue-600"
+              >
+                <RefreshCw
+                  className={`h-4 w-4 ${updateState?.phase === 'checking' ? 'animate-spin' : ''}`}
+                />
+                <span>
+                  {updateState?.phase === 'checking'
+                    ? '检查更新中…'
+                    : updateState?.phase === 'downloading'
+                      ? `下载中 ${updateState.percent ?? 0}%…`
+                      : '检查更新'}
+                </span>
+              </button>
+            )}
+          </div>
+        </div>
+
+        <p className="text-sm leading-relaxed text-slate-600 dark:text-slate-300">
+          {updateState?.message ||
+            '通过 GitHub Releases（latest.yml + SHA-512 校验）检测新版本并直接下载升级，升级不会影响你的本地学习数据文件夹。'}
+        </p>
+
+        {updateState?.phase === 'downloading' && (
+          <div className="space-y-1.5">
+            <div className="h-2 w-full overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800">
+              <div
+                className="h-full rounded-full bg-blue-600 transition-all duration-200 dark:bg-blue-500"
+                style={{ width: `${Math.min(100, Math.max(0, updateState.percent ?? 0))}%` }}
+              />
+            </div>
+            <div className="flex items-center justify-between text-xs font-mono tabular-nums text-slate-500 dark:text-slate-400">
+              <span>{updateState.percent ?? 0}%</span>
+              {typeof updateState.bytesPerSecond === 'number' && updateState.bytesPerSecond > 0 && (
+                <span>{(updateState.bytesPerSecond / (1024 * 1024)).toFixed(2)} MB/s</span>
+              )}
+            </div>
+          </div>
+        )}
+      </section>
+
       {/* 外观与字号 */}
       <section className="space-y-4 rounded-xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-[#131C31]">
         <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">
-          界面外观与阅读字号
+          界面外观与字号
         </h2>
 
         <div className="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
@@ -194,9 +303,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
         <div className="flex flex-col gap-5 border-t border-slate-100 pt-5 sm:flex-row sm:items-center sm:justify-between dark:border-slate-800">
           <div>
-            <p className="text-sm font-medium text-slate-800 dark:text-slate-200">英文阅读字号</p>
+            <p className="text-sm font-medium text-slate-800 dark:text-slate-200">英文字号</p>
             <p className="text-xs text-slate-500 dark:text-slate-400">
-              调整测验题干、阅读材料与复习原句的字体大小
+              调整测验题干、选项与复习原句的字体大小
             </p>
           </div>
           <div className="flex items-center gap-1 rounded-lg bg-slate-100 p-1 w-fit dark:bg-slate-800">
@@ -230,7 +339,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           <div className="flex items-center gap-2">
             <FolderOpen className="h-5 w-5 text-blue-600 dark:text-blue-400" />
             <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">
-              StudyHub 数据文件夹
+              Joel Study Hub 数据文件夹
             </h2>
           </div>
           <span className="text-xs text-slate-500 dark:text-slate-400">
