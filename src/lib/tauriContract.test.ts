@@ -100,11 +100,44 @@ test('GitHub Actions CI and Windows Release workflows verify Rust tests and SHA-
     path.join(rootDir, '.github', 'workflows', 'release-windows.yml'),
     'utf-8',
   );
+  assert.match(release, /node scripts\/sync-version\.mjs/);
+  assert.doesNotMatch(release, /node -e "/, 'Avoid inline node -e inside PowerShell due to quote escaping issues');
   assert.match(release, /STUDYHUB_GITHUB_REPO/);
   assert.match(release, /@tauri-apps\/cli@2 build --bundles nsis/);
   assert.match(release, /checksums\.txt/);
   assert.match(release, /make_latest:\s*true/);
   assert.match(release, /cargo test/);
+});
+
+test('scripts/sync-version.mjs cleanly updates package.json, tauri.conf.json and Cargo.toml', async () => {
+  const { syncVersion } = await import('../../scripts/sync-version.mjs');
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'studyhub-sync-ver-'));
+  try {
+    fs.mkdirSync(path.join(tmpDir, 'src-tauri'), { recursive: true });
+    fs.writeFileSync(path.join(tmpDir, 'package.json'), JSON.stringify({ name: 'studyhub', version: '1.0.0' }, null, 2));
+    fs.writeFileSync(
+      path.join(tmpDir, 'src-tauri', 'tauri.conf.json'),
+      JSON.stringify({ productName: 'StudyHub', version: '1.0.0' }, null, 2),
+    );
+    fs.writeFileSync(
+      path.join(tmpDir, 'src-tauri', 'Cargo.toml'),
+      '[package]\nname = "studyhub"\nversion = "1.0.0"\nedition = "2021"\n',
+    );
+
+    const synced = syncVersion(tmpDir, 'v1.2.3');
+    assert.equal(synced, '1.2.3');
+    assert.equal(JSON.parse(fs.readFileSync(path.join(tmpDir, 'package.json'), 'utf8')).version, '1.2.3');
+    assert.equal(
+      JSON.parse(fs.readFileSync(path.join(tmpDir, 'src-tauri', 'tauri.conf.json'), 'utf8')).version,
+      '1.2.3',
+    );
+    assert.match(
+      fs.readFileSync(path.join(tmpDir, 'src-tauri', 'Cargo.toml'), 'utf8'),
+      /^version = "1\.2\.3"$/m,
+    );
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
 });
 
 test('Fresh StudyHub data directory starts blank and auto-generates AGENT_GUIDE.md', async () => {
