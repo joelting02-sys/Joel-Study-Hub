@@ -165,7 +165,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         </p>
       </div>
 
-      {/* 软件更新（官方 electron-updater + GitHub Releases） */}
+      {/* 软件更新（Rust 原生直连 GitHub Releases + SHA-256 校验） */}
       <section
         data-testid="settings-updater-section"
         className="space-y-4 rounded-xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-[#131C31]"
@@ -177,7 +177,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               软件更新
             </h2>
             <span className="font-mono text-xs text-slate-500 dark:text-slate-400">
-              当前版本 v{updateState?.currentVersion || '1.0.0'}
+              当前版本 v{updateState?.currentVersion || '1.0.1'}
             </span>
           </div>
 
@@ -241,7 +241,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
         <p className="text-sm leading-relaxed text-slate-600 dark:text-slate-300">
           {updateState?.message ||
-            '通过 GitHub Releases（latest.yml + SHA-512 校验）检测新版本并直接下载升级，升级不会影响你的本地学习数据文件夹。'}
+            '直连 GitHub Releases（免密钥 + SHA-256 完整性校验）检测新版本并启动安装升级，升级不会影响你的本地学习数据文件夹。'}
         </p>
 
         {updateState?.phase === 'downloading' && (
@@ -357,8 +357,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           </div>
           <span className="text-xs text-slate-500 dark:text-slate-400">
             {isDesktopClient
-              ? '运行模式：Windows 桌面客户端（原生 IPC，无 localhost）'
-              : '运行模式：在线预览（下载至 Windows 启动桌面客户端后为纯本地 IPC）'}
+              ? '运行模式：Windows 桌面客户端（Tauri v2 + Rust 原生 IPC，无 localhost）'
+              : '运行模式：在线预览（安装 Windows 客户端后为纯本地 Rust IPC）'}
           </span>
         </div>
 

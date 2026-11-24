@@ -2,22 +2,18 @@
 chcp 65001 >nul
 echo ============================================
 echo   StudyHub Windows 安装包 (.exe) 打包脚本
+echo   （Tauri v2 + Rust 原生内核）
 echo ============================================
 echo.
 
 if not exist node_modules (
-  echo [1/3] 正在安装基础依赖...
+  echo [1/2] 正在安装前端依赖...
   call npm install
 )
 
-if not exist node_modules\electron-builder (
-  echo [2/3] 正在安装 Electron 打包工具...
-  call npm install -D electron electron-builder
-)
-
-echo [3/3] 正在打包 Windows .exe 安装程序，请稍候...
-call npm run electron:pack
+echo [2/2] 正在编译 Rust 内核并打包 Windows NSIS 安装包，请稍候...
+call npm run tauri:build
 
 echo.
-echo 打包完成！请打开项目目录中的 release\ 文件夹找到 StudyHub-Setup-*.exe（安装版）与 StudyHub-Portable-*.exe（便携版）。
+echo 打包完成！请在 src-tauri\target\release\bundle\nsis\ 中找到安装程序，或在 src-tauri\target\release\studyhub.exe 获取单文件便携版。
 pause

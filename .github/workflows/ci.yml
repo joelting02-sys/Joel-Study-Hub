@@ -7,8 +7,8 @@ on:
     branches: [main, master]
 
 jobs:
-  verify:
-    name: Type-check, Test & Build
+  frontend-verify:
+    name: Frontend Type-check, Tests & Build
     runs-on: ubuntu-latest
 
     steps:
@@ -23,14 +23,43 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Build Electron main bundle
-        run: npm run electron:build-main
-
       - name: Type-check (tsc)
         run: npm run lint
 
-      - name: Run unit & IPC contract tests
+      - name: Run frontend & Tauri contract tests
         run: npm test
 
       - name: Build frontend bundle
         run: npm run build
+
+  rust-verify:
+    name: Rust Kernel Check & Parity Tests (Windows)
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Setup Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      - name: Build frontend dist (required by tauri::generate_context!)
+        run: |
+          npm install
+          npm run build
+
+      - name: Run Rust unit & parity tests
+        working-directory: src-tauri
+        env:
+          STUDYHUB_GITHUB_REPO: ${{ github.repository }}
+        run: cargo test

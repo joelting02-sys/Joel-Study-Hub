@@ -1,9 +1,11 @@
 /**
  * StudyHub 前端数据访问层
- * - 在 Windows Electron 桌面客户端中：100% 走原生 Electron IPC (window.studyhubIPC)，零 localhost、零 HTTP 端口
- * - 在云端浏览器预览环境降级时：自动回退到 /api/* 以便在线预览测试
+ * - 在 Windows Tauri v2 桌面客户端中：100% 走原生 Rust IPC（@tauri-apps/api invoke / listen），零 localhost、零 HTTP 端口
+ * - 在云端浏览器预览环境降级时：自动回退到 /api/* 与 SSE，保持在线预览可用
  */
 
+import { invoke, isTauri } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import type {
   AppUpdateState,
   FolderStatus,
@@ -14,11 +16,20 @@ import type {
   VocabFile,
   VocabStatus,
 } from '../types/studyhub';
-import type { StudyHubEventPayload } from '../types/electron';
 import { lookupWord as localLookupWord } from '../lib/dictionary';
 
-function getIpc() {
-  return typeof window !== 'undefined' ? window.studyhubIPC : undefined;
+export interface StudyHubEventPayload {
+  type?: 'vocab_updated' | 'quizzes_updated' | 'inbox_merged' | 'dict_updated' | 'results_updated';
+  message?: string;
+  addedCount?: number;
+}
+
+function isTauriDesktop(): boolean {
+  try {
+    return typeof window !== 'undefined' && isTauri();
+  } catch {
+    return false;
+  }
 }
 
 async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
@@ -41,18 +52,16 @@ async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
 
 export const studyhubApi = {
   isDesktopClient(): boolean {
-    return Boolean(getIpc()?.isElectron);
+    return isTauriDesktop();
   },
 
   getStatus(): Promise<FolderStatus> {
-    const ipc = getIpc();
-    if (ipc) return ipc.getStatus();
+    if (isTauriDesktop()) return invoke<FolderStatus>('get_status');
     return requestJson<FolderStatus>('/api/status');
   },
 
   setDataDir(dataDir: string): Promise<FolderStatus> {
-    const ipc = getIpc();
-    if (ipc) return ipc.setDataDir(dataDir);
+    if (isTauriDesktop()) return invoke<FolderStatus>('set_data_dir', { dataDir });
     return requestJson<FolderStatus>('/api/settings/data-dir', {
       method: 'POST',
       body: JSON.stringify({ dataDir }),
@@ -60,20 +69,19 @@ export const studyhubApi = {
   },
 
   async pickDataDir(): Promise<{ canceled: boolean; status?: FolderStatus }> {
-    const ipc = getIpc();
-    if (ipc) return ipc.pickDataDir();
+    if (isTauriDesktop()) {
+      return invoke<{ canceled: boolean; status?: FolderStatus }>('pick_data_dir');
+    }
     return { canceled: true };
   },
 
   async openDataDir(): Promise<{ ok: boolean; error?: string }> {
-    const ipc = getIpc();
-    if (ipc) return ipc.openDataDir();
+    if (isTauriDesktop()) return invoke<{ ok: boolean; error?: string }>('open_data_dir');
     return { ok: false, error: '仅桌面客户端支持直接打开系统资源管理器' };
   },
 
   getVocab(): Promise<VocabFile> {
-    const ipc = getIpc();
-    if (ipc) return ipc.getVocab();
+    if (isTauriDesktop()) return invoke<VocabFile>('get_vocab');
     return requestJson<VocabFile>('/api/vocab');
   },
 
@@ -86,8 +94,11 @@ export const studyhubApi = {
     source?: string;
     subject?: string;
   }): Promise<{ entry: VocabEntry; isNew: boolean; vocab: VocabFile }> {
-    const ipc = getIpc();
-    if (ipc) return ipc.addVocab(payload);
+    if (isTauriDesktop()) {
+      return invoke<{ entry: VocabEntry; isNew: boolean; vocab: VocabFile }>('add_vocab', {
+        payload,
+      });
+    }
     return requestJson('/api/vocab', {
       method: 'POST',
       body: JSON.stringify(payload),
@@ -98,8 +109,7 @@ export const studyhubApi = {
     id: string,
     patch: { meaning_zh?: string; status?: VocabStatus; subject?: string; context?: string },
   ): Promise<VocabFile> {
-    const ipc = getIpc();
-    if (ipc) return ipc.updateVocab(id, patch);
+    if (isTauriDesktop()) return invoke<VocabFile>('update_vocab', { id, patch });
     return requestJson<VocabFile>(`/api/vocab/${encodeURIComponent(id)}`, {
       method: 'PATCH',
       body: JSON.stringify(patch),
@@ -107,16 +117,14 @@ export const studyhubApi = {
   },
 
   deleteVocab(id: string): Promise<VocabFile> {
-    const ipc = getIpc();
-    if (ipc) return ipc.deleteVocab(id);
+    if (isTauriDesktop()) return invoke<VocabFile>('delete_vocab', { id });
     return requestJson<VocabFile>(`/api/vocab/${encodeURIComponent(id)}`, {
       method: 'DELETE',
     });
   },
 
   recordReview(id: string, remembered: boolean): Promise<VocabFile> {
-    const ipc = getIpc();
-    if (ipc) return ipc.recordReview(id, remembered);
+    if (isTauriDesktop()) return invoke<VocabFile>('record_review', { id, remembered });
     return requestJson<VocabFile>(`/api/vocab/review/${encodeURIComponent(id)}`, {
       method: 'POST',
       body: JSON.stringify({ remembered }),
@@ -124,8 +132,7 @@ export const studyhubApi = {
   },
 
   exportMarkdown(): Promise<{ markdown: string; path: string }> {
-    const ipc = getIpc();
-    if (ipc) return ipc.exportMarkdown();
+    if (isTauriDesktop()) return invoke<{ markdown: string; path: string }>('export_markdown');
     return requestJson('/api/vocab/export-markdown');
   },
 
@@ -133,8 +140,12 @@ export const studyhubApi = {
     filename: string,
     data: { words: unknown[] },
   ): Promise<{ addedCount: number; vocab: VocabFile }> {
-    const ipc = getIpc();
-    if (ipc) return ipc.importInbox(filename, data);
+    if (isTauriDesktop()) {
+      return invoke<{ addedCount: number; vocab: VocabFile }>('import_inbox', {
+        filename,
+        data,
+      });
+    }
     return requestJson('/api/inbox/import', {
       method: 'POST',
       body: JSON.stringify({ filename, data }),
@@ -142,14 +153,17 @@ export const studyhubApi = {
   },
 
   getQuizzes(): Promise<{ quizzes: QuizFile[] }> {
-    const ipc = getIpc();
-    if (ipc) return ipc.getQuizzes();
+    if (isTauriDesktop()) return invoke<{ quizzes: QuizFile[] }>('get_quizzes');
     return requestJson('/api/quizzes');
   },
 
   importQuiz(filename: string, quiz: QuizFile): Promise<{ quiz: QuizFile; quizzes: QuizFile[] }> {
-    const ipc = getIpc();
-    if (ipc) return ipc.importQuiz(filename, quiz);
+    if (isTauriDesktop()) {
+      return invoke<{ quiz: QuizFile; quizzes: QuizFile[] }>('import_quiz', {
+        filename,
+        quiz,
+      });
+    }
     return requestJson('/api/quizzes/import', {
       method: 'POST',
       body: JSON.stringify({ filename, quiz }),
@@ -157,14 +171,14 @@ export const studyhubApi = {
   },
 
   getResults(): Promise<{ results: QuizResultFile[] }> {
-    const ipc = getIpc();
-    if (ipc) return ipc.getResults();
+    if (isTauriDesktop()) return invoke<{ results: QuizResultFile[] }>('get_results');
     return requestJson('/api/results');
   },
 
   saveResult(filename: string, result: QuizResultFile): Promise<{ result: QuizResultFile }> {
-    const ipc = getIpc();
-    if (ipc) return ipc.saveResult(filename, result);
+    if (isTauriDesktop()) {
+      return invoke<{ result: QuizResultFile }>('save_result', { filename, result });
+    }
     return requestJson('/api/results', {
       method: 'POST',
       body: JSON.stringify({ filename, result }),
@@ -175,9 +189,8 @@ export const studyhubApi = {
     surface: string,
     options: { glossary?: Record<string, string>; matchedGlossaryKey?: string } = {},
   ): Promise<LookupResult> {
-    const ipc = getIpc();
-    if (ipc) {
-      return ipc.lookup(surface, options);
+    if (isTauriDesktop()) {
+      return invoke<LookupResult>('lookup_word_cmd', { surface, options });
     }
     try {
       return await requestJson<LookupResult>('/api/dict/lookup', {
@@ -194,8 +207,9 @@ export const studyhubApi = {
   },
 
   importDictCsv(filename: string, content: string): Promise<FolderStatus> {
-    const ipc = getIpc();
-    if (ipc) return ipc.importDictCsv(filename, content);
+    if (isTauriDesktop()) {
+      return invoke<FolderStatus>('import_dict_csv', { filename, content });
+    }
     return requestJson('/api/dict/import-csv', {
       method: 'POST',
       body: JSON.stringify({ filename, content }),
@@ -204,14 +218,30 @@ export const studyhubApi = {
 
   /**
    * 实时监听数据文件夹变化：
-   * - Electron 桌面客户端使用原生 IPC 事件（零 SSE、零 localhost）
+   * - Tauri v2 桌面客户端使用原生 Rust notify + Tauri Event（零 SSE、零 localhost）
    * - 网页预览模式回退到 SSE (/api/events)
    */
   subscribeEvents(onEvent: (event: StudyHubEventPayload) => void): () => void {
-    const ipc = getIpc();
-    if (ipc) {
-      return ipc.onEvent(onEvent);
+    if (isTauriDesktop()) {
+      let disposed = false;
+      let unlistenFn: (() => void) | null = null;
+      void listen<StudyHubEventPayload>('studyhub:event', (evt) => {
+        if (!disposed && evt.payload) {
+          onEvent(evt.payload);
+        }
+      }).then((fn) => {
+        if (disposed) {
+          fn();
+        } else {
+          unlistenFn = fn;
+        }
+      });
+      return () => {
+        disposed = true;
+        unlistenFn?.();
+      };
     }
+
     if (typeof EventSource === 'undefined') {
       return () => {};
     }
@@ -235,46 +265,60 @@ export const studyhubApi = {
   },
 
   async getUpdateState(): Promise<AppUpdateState> {
-    const ipc = getIpc();
-    if (ipc?.getUpdateState) return ipc.getUpdateState();
+    if (isTauriDesktop()) return invoke<AppUpdateState>('get_update_state');
     return {
-      currentVersion: '1.0.0',
+      currentVersion: '1.0.1',
       isPackaged: false,
       isPortable: false,
       supported: false,
       phase: 'unsupported',
-      message: '仅 Windows 安装版客户端（StudyHub-Setup-*.exe）支持在应用内直接通过 GitHub Releases 升级。',
+      message: '仅 Windows Tauri 安装版客户端（StudyHub-Setup-*.exe）支持应用内直连 GitHub Releases 升级。',
     };
   },
 
   async checkForUpdates(): Promise<AppUpdateState> {
-    const ipc = getIpc();
-    if (ipc?.checkForUpdates) return ipc.checkForUpdates();
+    if (isTauriDesktop()) return invoke<AppUpdateState>('check_for_updates');
     return this.getUpdateState();
   },
 
   async downloadUpdate(): Promise<AppUpdateState> {
-    const ipc = getIpc();
-    if (ipc?.downloadUpdate) return ipc.downloadUpdate();
+    if (isTauriDesktop()) return invoke<AppUpdateState>('download_update');
     return this.getUpdateState();
   },
 
-  async quitAndInstall(): Promise<{ ok: boolean }> {
-    const ipc = getIpc();
-    if (ipc?.quitAndInstall) return ipc.quitAndInstall();
+  async quitAndInstall(): Promise<{ ok: boolean; error?: string }> {
+    if (isTauriDesktop()) {
+      return invoke<{ ok: boolean; error?: string }>('quit_and_install');
+    }
     return { ok: false };
   },
 
   async openReleasesPage(): Promise<{ ok: boolean; error?: string }> {
-    const ipc = getIpc();
-    if (ipc?.openReleasesPage) return ipc.openReleasesPage();
+    if (isTauriDesktop()) {
+      return invoke<{ ok: boolean; error?: string }>('open_releases_page');
+    }
     return { ok: false, error: '仅桌面客户端支持直接打开外部浏览器' };
   },
 
   subscribeUpdateStatus(onUpdate: (state: AppUpdateState) => void): () => void {
-    const ipc = getIpc();
-    if (ipc?.onUpdateStatus) {
-      return ipc.onUpdateStatus(onUpdate);
+    if (isTauriDesktop()) {
+      let disposed = false;
+      let unlistenFn: (() => void) | null = null;
+      void listen<AppUpdateState>('studyhub:update-status', (evt) => {
+        if (!disposed && evt.payload) {
+          onUpdate(evt.payload);
+        }
+      }).then((fn) => {
+        if (disposed) {
+          fn();
+        } else {
+          unlistenFn = fn;
+        }
+      });
+      return () => {
+        disposed = true;
+        unlistenFn?.();
+      };
     }
     return () => {};
   },

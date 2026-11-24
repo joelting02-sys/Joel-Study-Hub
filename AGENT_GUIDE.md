@@ -164,6 +164,6 @@ Generated automatically by StudyHub when Joel completes a quiz:
 
 ## 6. Launching the Windows Desktop Client
 
-- Double-click `启动桌面版.bat` (or run `npm run electron:start`).
-- Package a standalone `.exe` installer with `打包Windows安装包.bat` (or `npm run electron:pack`).
-- StudyHub runs via pure Electron IPC + `loadFile('dist/index.html')` with **zero localhost and zero open HTTP ports**.
+- Double-click `启动桌面版.bat` (or run `npm run tauri:dev`).
+- Package a standalone `.exe` installer with `打包Windows安装包.bat` (or `npm run tauri:build`).
+- StudyHub runs via **Tauri v2 + Rust native IPC** (`notify` file watcher + local WebView2) with **zero localhost and zero open HTTP ports**.

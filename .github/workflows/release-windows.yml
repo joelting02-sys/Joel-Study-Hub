@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: 'Release tag name (e.g. v1.0.1; leave empty to use v<package.json version>)'
+        description: 'Release tag name (e.g. v1.0.2; leave empty to use v<package.json version>)'
         required: false
         default: ''
         type: string
@@ -24,7 +24,7 @@ concurrency:
 
 jobs:
   build-and-release-windows:
-    name: Build & Publish Windows .exe
+    name: Build & Publish Windows Tauri v2 (.exe)
     runs-on: windows-latest
 
     steps:
@@ -35,6 +35,14 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+
+      - name: Setup Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
 
       - name: Resolve release tag and version
         id: tag
@@ -57,104 +65,112 @@ jobs:
           echo "name=$tagName" >> $env:GITHUB_OUTPUT
           echo "version=$cleanVersion" >> $env:GITHUB_OUTPUT
 
-      - name: Inject GitHub Releases auto-update publish config into package.json
+      - name: Sync version across package.json, tauri.conf.json and Cargo.toml
         shell: pwsh
         run: |
+          $ver = "${{ steps.tag.outputs.version }}"
           node -e "
             const fs = require('fs');
+            const ver = process.argv[1];
             const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
-            pkg.version = '${{ steps.tag.outputs.version }}';
-            pkg.build = pkg.build || {};
-            pkg.build.generateUpdatesFilesForAllChannels = true;
-            pkg.build.publish = [
-              {
-                provider: 'github',
-                owner: '${{ github.repository_owner }}',
-                repo: '${{ github.event.repository.name }}',
-                releaseType: 'release'
-              }
-            ];
+            pkg.version = ver;
             fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
-          "
 
-      - name: Install dependencies
+            const tauriConf = JSON.parse(fs.readFileSync('src-tauri/tauri.conf.json', 'utf8'));
+            tauriConf.version = ver;
+            fs.writeFileSync('src-tauri/tauri.conf.json', JSON.stringify(tauriConf, null, 2) + '\n');
+
+            let cargo = fs.readFileSync('src-tauri/Cargo.toml', 'utf8');
+            cargo = cargo.replace(/^version\s*=\s*\"[^\"]+\"/m, 'version = \"' + ver + '\"');
+            fs.writeFileSync('src-tauri/Cargo.toml', cargo);
+          " $ver
+
+      - name: Install frontend dependencies
         run: npm install
 
-      - name: Build Electron main process
-        run: npm run electron:build-main
-
-      - name: Type-check & run tests
+      - name: Type-check, run frontend tests & build dist
         run: |
           npm run lint
           npm test
-
-      - name: Install Electron & electron-builder
-        run: npm install --no-save electron electron-builder
-
-      - name: Build Windows installer, portable .exe & auto-update metadata (latest.yml + blockmap + app-update.yml)
-        env:
-          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-        run: |
           npm run build
-          npm run electron:build-main
-          npx electron-builder --win nsis portable --publish never
 
-      - name: Verify .exe, blockmap, latest.yml and app-update.yml artifacts exist
+      - name: Run Rust unit & behavioral parity tests
+        working-directory: src-tauri
+        env:
+          STUDYHUB_GITHUB_REPO: ${{ github.repository }}
+        run: cargo test
+
+      - name: Build Tauri v2 Windows NSIS installer
+        env:
+          STUDYHUB_GITHUB_REPO: ${{ github.repository }}
+        run: npx @tauri-apps/cli@2 build --bundles nsis
+
+      - name: Collect Windows artifacts and generate SHA-256 checksums.txt
         shell: pwsh
         run: |
-          $exes = Get-ChildItem -Path release -Filter "*.exe" -ErrorAction SilentlyContinue
-          if (-not $exes -or $exes.Count -eq 0) {
-            Write-Error "No .exe files found in release/ directory!"
+          $ver = "${{ steps.tag.outputs.version }}"
+          New-Item -ItemType Directory -Force -Path release | Out-Null
+
+          $nsisExe = Get-ChildItem -Path "src-tauri/target/release/bundle/nsis" -Filter "*.exe" | Select-Object -First 1
+          if (-not $nsisExe) {
+            Write-Error "NSIS setup .exe not found under src-tauri/target/release/bundle/nsis!"
             exit 1
           }
-          if (-not (Test-Path "release/latest.yml")) {
-            Write-Error "release/latest.yml was not generated! Auto-update requires latest.yml."
+          $setupOut = "release/StudyHub-Setup-$ver.exe"
+          Copy-Item -Force $nsisExe.FullName $setupOut
+
+          $rawBin = "src-tauri/target/release/studyhub.exe"
+          if (-not (Test-Path $rawBin)) {
+            Write-Error "Compiled binary $rawBin not found!"
             exit 1
           }
-          if (-not (Test-Path "release/win-unpacked/resources/app-update.yml")) {
-            Write-Error "release/win-unpacked/resources/app-update.yml was not generated! In-app updater requires app-update.yml."
-            exit 1
+          $portableOut = "release/StudyHub-Portable-$ver.exe"
+          Copy-Item -Force $rawBin $portableOut
+
+          $checksumLines = @()
+          foreach ($f in @($setupOut, $portableOut)) {
+            $hash = (Get-FileHash -Path $f -Algorithm SHA256).Hash.ToLower()
+            $name = Split-Path -Leaf $f
+            $checksumLines += "$hash  $name"
           }
-          Write-Host "=== release/latest.yml ==="
-          Get-Content "release/latest.yml"
-          Write-Host "=== resources/app-update.yml ==="
-          Get-Content "release/win-unpacked/resources/app-update.yml"
+          $checksumLines -join "`n" | Set-Content -Path "release/checksums.txt" -Encoding utf8NoBOM
+
+          Write-Host "=== release/checksums.txt ==="
+          Get-Content "release/checksums.txt"
           Get-ChildItem -Path release | Format-Table Name, Length
 
       - name: Upload Windows .exe workflow artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: StudyHub-Windows-x64
+          name: StudyHub-Windows-x64-Tauri
           path: |
             release/StudyHub-Setup-*.exe
-            release/StudyHub-Setup-*.exe.blockmap
             release/StudyHub-Portable-*.exe
-            release/latest.yml
+            release/checksums.txt
             AGENT_GUIDE.md
 
-      - name: Publish Release notes & ensure all auto-update assets are attached
+      - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           tag_name: ${{ steps.tag.outputs.name }}
           target_commitish: ${{ github.sha }}
-          name: Joel Study Hub ${{ steps.tag.outputs.name }} (Windows x64)
+          name: Joel Study Hub ${{ steps.tag.outputs.name }} (Windows x64 · Rust/Tauri v2)
           make_latest: true
           fail_on_unmatched_files: true
           generate_release_notes: true
           body: |
             ## Joel Study Hub Windows 桌面客户端 (${{ steps.tag.outputs.name }})
 
-            纯原生 Electron 客户端（**零 localhost、零端口、零预设示例**），支持应用内通过 GitHub Releases 一键检查并升级。
+            基于 **Tauri v2 + Rust 原生内核** 构建（超轻安装包、**零 localhost、零端口、零预设示例**），内置免密钥直连 GitHub Releases + SHA-256 校验的一键升级功能。
 
             ### 下载说明（点击下方 Assets 中的文件下载）
-            - **`StudyHub-Setup-*.exe`**（推荐）：标准 Windows 安装程序，支持应用内「设置 → 检查更新」一键自动升级。
-            - **`StudyHub-Portable-*.exe`**：免安装便携版，下载后双击即可运行。
-            - **`latest.yml` & `*.blockmap`**：官方 `electron-updater` 自动更新校验与增量更新元数据文件（请勿删除）。
-            - **`AGENT_GUIDE.md`**：AI Agent 接入协议文档。
+            - **`StudyHub-Setup-*.exe`**（推荐）：标准 Windows NSIS 安装程序，支持应用内「设置 → 检查更新」直连 GitHub Releases 校验并一键升级。
+            - **`StudyHub-Portable-*.exe`**：免安装单文件便携版，下载后双击即可运行。
+            - **`checksums.txt`**：SHA-256 完整性校验清单（供应用内升级自动校验使用，请勿删除）。
+            - **`AGENT_GUIDE.md`**：AI Agent 本地文件协作协议文档。
           files: |
             release/StudyHub-Setup-*.exe
-            release/StudyHub-Setup-*.exe.blockmap
             release/StudyHub-Portable-*.exe
-            release/latest.yml
+            release/checksums.txt
             AGENT_GUIDE.md
