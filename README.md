@@ -77,6 +77,11 @@ StudyHub/
 
 > ⚠️ 如果 Actions 在发布阶段提示 `403 Resource not accessible by integration`，请进入 GitHub 仓库 **Settings → Actions → General → Workflow permissions**，勾选 **Read and write permissions** 并保存，然后重新运行一次 Workflow 即可。
 
+### 🔄 应用内一键升级（`electron-updater` + GitHub Releases）
+
+- 安装版（`StudyHub-Setup-*.exe`）内置官方 `electron-updater`，打开客户端 **「设置 → 软件更新」** 点击 **「检查更新」**，即可直接从你的公开 GitHub 仓库 Releases 拉取 `latest.yml` 校验版本号并下载更新包（支持 `.blockmap` 增量下载与 SHA-512 校验），完成后点击 **「立即重启并安装」** 自动覆盖升级，不会影响 `Documents\StudyHub\` 里的本地数据。
+- 发布新版本让旧客户端检测到升级时，确保新版本号严格高于当前版本（例如修改 `package.json` 的 `"version"` 为 `"1.0.1"`，或推送 tag `v1.0.1`，或在 Actions 手动填写 `release_tag: v1.0.1`）。
+
 ---
 
 ## 🛠️ 从源码本地运行 / 构建

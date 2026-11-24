@@ -23,11 +23,13 @@ import type {
   VocabStatus,
 } from '../src/types/studyhub.ts';
 
-const { autoUpdater } = updaterPkg;
-
 let mainWindow: BrowserWindow | null = null;
 let storage: StudyHubStorage | null = null;
 let updaterInitialized = false;
+
+function getAutoUpdater() {
+  return updaterPkg.autoUpdater;
+}
 
 function readRepoUrlFromAppUpdateYml(): { hasConfig: boolean; repoUrl?: string } {
   try {
@@ -96,14 +98,20 @@ function initAutoUpdater(): void {
 
   if (!supported) return;
 
+  const autoUpdater = getAutoUpdater();
+
   // 官方标准交互：先检查并展示版本号，由用户点击确认后再下载，下载完成后由用户点重启安装
   autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.disableWebInstaller = true;
 
   autoUpdater.on('checking-for-update', () => {
     emitUpdateState({
       phase: 'checking',
       percent: undefined,
+      transferred: undefined,
+      total: undefined,
+      bytesPerSecond: undefined,
       message: '正在连接 GitHub Releases 检查最新版本…',
     });
   });
@@ -112,7 +120,7 @@ function initAutoUpdater(): void {
     emitUpdateState({
       phase: 'available',
       latestVersion: info.version,
-      message: `发现新版本 v${info.version}，点击下方按钮开始下载升级。`,
+      message: `发现新版本 v${info.version}，点击下方按钮即可直接下载并升级。`,
     });
   });
 
@@ -140,7 +148,7 @@ function initAutoUpdater(): void {
       phase: 'downloaded',
       latestVersion: info.version,
       percent: 100,
-      message: `v${info.version} 已下载并校验完成，点击「立即重启并安装」完成升级。`,
+      message: `v${info.version} 已下载并完成 SHA-512 校验，点击「立即重启并安装」完成升级。`,
     });
   });
 
@@ -271,12 +279,15 @@ function registerIpcHandlers(): void {
     if (!updateState.supported) {
       return updateState;
     }
+    if (updateState.phase === 'checking' || updateState.phase === 'downloading') {
+      return updateState;
+    }
     try {
       emitUpdateState({
         phase: 'checking',
         message: '正在连接 GitHub Releases 检查最新版本…',
       });
-      await autoUpdater.checkForUpdates();
+      await getAutoUpdater().checkForUpdates();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       emitUpdateState({ phase: 'error', message: `检查更新失败：${msg}` });
@@ -288,13 +299,19 @@ function registerIpcHandlers(): void {
     if (!updateState.supported) {
       return updateState;
     }
+    if (updateState.phase === 'downloading') {
+      return updateState;
+    }
     try {
       emitUpdateState({
         phase: 'downloading',
         percent: 0,
+        transferred: 0,
+        total: 0,
+        bytesPerSecond: 0,
         message: '正在从 GitHub Releases 下载更新包…',
       });
-      await autoUpdater.downloadUpdate();
+      await getAutoUpdater().downloadUpdate();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       emitUpdateState({ phase: 'error', message: `下载更新失败：${msg}` });
@@ -307,7 +324,7 @@ function registerIpcHandlers(): void {
       return { ok: false };
     }
     setImmediate(() => {
-      autoUpdater.quitAndInstall(false, true);
+      getAutoUpdater().quitAndInstall(false, true);
     });
     return { ok: true };
   });

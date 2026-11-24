@@ -230,7 +230,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     ? '检查更新中…'
                     : updateState?.phase === 'downloading'
                       ? `下载中 ${updateState.percent ?? 0}%…`
-                      : '检查更新'}
+                      : updateState?.phase === 'error'
+                        ? '重新检查更新'
+                        : '检查更新'}
                 </span>
               </button>
             )}
@@ -251,7 +253,18 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               />
             </div>
             <div className="flex items-center justify-between text-xs font-mono tabular-nums text-slate-500 dark:text-slate-400">
-              <span>{updateState.percent ?? 0}%</span>
+              <span>
+                {updateState.percent ?? 0}%
+                {typeof updateState.transferred === 'number' &&
+                  typeof updateState.total === 'number' &&
+                  updateState.total > 0 && (
+                    <>
+                      {' · '}
+                      {(updateState.transferred / (1024 * 1024)).toFixed(1)} /{' '}
+                      {(updateState.total / (1024 * 1024)).toFixed(1)} MB
+                    </>
+                  )}
+              </span>
               {typeof updateState.bytesPerSecond === 'number' && updateState.bytesPerSecond > 0 && (
                 <span>{(updateState.bytesPerSecond / (1024 * 1024)).toFixed(2)} MB/s</span>
               )}

@@ -20869,10 +20869,12 @@ var StudyHubStorage = class extends import_events.EventEmitter {
 };
 
 // electron/main.ts
-var { autoUpdater } = import_electron_updater.default;
 var mainWindow = null;
 var storage = null;
 var updaterInitialized = false;
+function getAutoUpdater() {
+  return import_electron_updater.default.autoUpdater;
+}
 function readRepoUrlFromAppUpdateYml() {
   try {
     const resourcesPath = process.resourcesPath;
@@ -20932,12 +20934,17 @@ function initAutoUpdater() {
     repoUrl
   };
   if (!supported) return;
+  const autoUpdater = getAutoUpdater();
   autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.disableWebInstaller = true;
   autoUpdater.on("checking-for-update", () => {
     emitUpdateState({
       phase: "checking",
       percent: void 0,
+      transferred: void 0,
+      total: void 0,
+      bytesPerSecond: void 0,
       message: "\u6B63\u5728\u8FDE\u63A5 GitHub Releases \u68C0\u67E5\u6700\u65B0\u7248\u672C\u2026"
     });
   });
@@ -20945,7 +20952,7 @@ function initAutoUpdater() {
     emitUpdateState({
       phase: "available",
       latestVersion: info.version,
-      message: `\u53D1\u73B0\u65B0\u7248\u672C v${info.version}\uFF0C\u70B9\u51FB\u4E0B\u65B9\u6309\u94AE\u5F00\u59CB\u4E0B\u8F7D\u5347\u7EA7\u3002`
+      message: `\u53D1\u73B0\u65B0\u7248\u672C v${info.version}\uFF0C\u70B9\u51FB\u4E0B\u65B9\u6309\u94AE\u5373\u53EF\u76F4\u63A5\u4E0B\u8F7D\u5E76\u5347\u7EA7\u3002`
     });
   });
   autoUpdater.on("update-not-available", (info) => {
@@ -20970,7 +20977,7 @@ function initAutoUpdater() {
       phase: "downloaded",
       latestVersion: info.version,
       percent: 100,
-      message: `v${info.version} \u5DF2\u4E0B\u8F7D\u5E76\u6821\u9A8C\u5B8C\u6210\uFF0C\u70B9\u51FB\u300C\u7ACB\u5373\u91CD\u542F\u5E76\u5B89\u88C5\u300D\u5B8C\u6210\u5347\u7EA7\u3002`
+      message: `v${info.version} \u5DF2\u4E0B\u8F7D\u5E76\u5B8C\u6210 SHA-512 \u6821\u9A8C\uFF0C\u70B9\u51FB\u300C\u7ACB\u5373\u91CD\u542F\u5E76\u5B89\u88C5\u300D\u5B8C\u6210\u5347\u7EA7\u3002`
     });
   });
   autoUpdater.on("error", (err) => {
@@ -21061,12 +21068,15 @@ function registerIpcHandlers() {
     if (!updateState.supported) {
       return updateState;
     }
+    if (updateState.phase === "checking" || updateState.phase === "downloading") {
+      return updateState;
+    }
     try {
       emitUpdateState({
         phase: "checking",
         message: "\u6B63\u5728\u8FDE\u63A5 GitHub Releases \u68C0\u67E5\u6700\u65B0\u7248\u672C\u2026"
       });
-      await autoUpdater.checkForUpdates();
+      await getAutoUpdater().checkForUpdates();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       emitUpdateState({ phase: "error", message: `\u68C0\u67E5\u66F4\u65B0\u5931\u8D25\uFF1A${msg}` });
@@ -21077,13 +21087,19 @@ function registerIpcHandlers() {
     if (!updateState.supported) {
       return updateState;
     }
+    if (updateState.phase === "downloading") {
+      return updateState;
+    }
     try {
       emitUpdateState({
         phase: "downloading",
         percent: 0,
+        transferred: 0,
+        total: 0,
+        bytesPerSecond: 0,
         message: "\u6B63\u5728\u4ECE GitHub Releases \u4E0B\u8F7D\u66F4\u65B0\u5305\u2026"
       });
-      await autoUpdater.downloadUpdate();
+      await getAutoUpdater().downloadUpdate();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       emitUpdateState({ phase: "error", message: `\u4E0B\u8F7D\u66F4\u65B0\u5931\u8D25\uFF1A${msg}` });
@@ -21095,7 +21111,7 @@ function registerIpcHandlers() {
       return { ok: false };
     }
     setImmediate(() => {
-      autoUpdater.quitAndInstall(false, true);
+      getAutoUpdater().quitAndInstall(false, true);
     });
     return { ok: true };
   });

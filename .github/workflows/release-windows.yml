@@ -65,6 +65,7 @@ jobs:
             const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
             pkg.version = '${{ steps.tag.outputs.version }}';
             pkg.build = pkg.build || {};
+            pkg.build.generateUpdatesFilesForAllChannels = true;
             pkg.build.publish = [
               {
                 provider: 'github',
@@ -79,9 +80,6 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Install Electron & electron-builder
-        run: npm install -D electron electron-builder
-
       - name: Build Electron main process
         run: npm run electron:build-main
 
@@ -90,16 +88,18 @@ jobs:
           npm run lint
           npm test
 
-      - name: Build Windows installer, portable .exe & auto-update metadata (latest.yml + blockmap)
+      - name: Install Electron & electron-builder
+        run: npm install --no-save electron electron-builder
+
+      - name: Build Windows installer, portable .exe & auto-update metadata (latest.yml + blockmap + app-update.yml)
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           npm run build
           npm run electron:build-main
-          npx electron-builder --win nsis portable --publish always
+          npx electron-builder --win nsis portable --publish never
 
-      - name: Verify .exe and latest.yml artifacts exist
+      - name: Verify .exe, blockmap, latest.yml and app-update.yml artifacts exist
         shell: pwsh
         run: |
           $exes = Get-ChildItem -Path release -Filter "*.exe" -ErrorAction SilentlyContinue
@@ -111,6 +111,14 @@ jobs:
             Write-Error "release/latest.yml was not generated! Auto-update requires latest.yml."
             exit 1
           }
+          if (-not (Test-Path "release/win-unpacked/resources/app-update.yml")) {
+            Write-Error "release/win-unpacked/resources/app-update.yml was not generated! In-app updater requires app-update.yml."
+            exit 1
+          }
+          Write-Host "=== release/latest.yml ==="
+          Get-Content "release/latest.yml"
+          Write-Host "=== resources/app-update.yml ==="
+          Get-Content "release/win-unpacked/resources/app-update.yml"
           Get-ChildItem -Path release | Format-Table Name, Length
 
       - name: Upload Windows .exe workflow artifacts

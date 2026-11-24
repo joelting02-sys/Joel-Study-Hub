@@ -13,12 +13,15 @@ test('Electron main.ts uses pure loadFile + IPC with zero localhost/HTTP server'
   assert.doesNotMatch(mainSrc, /http:\/\/127\.0\.0\.1|http:\/\/localhost|loadURL\(|spawn\(/);
 });
 
-test('Electron main.cjs bundled output exists and contains no localhost server code', () => {
+test('Electron main.cjs bundled output exists, loads local dist/index.html, and includes electron-updater IPC', () => {
   const mainCjsPath = path.join(rootDir, 'electron', 'main.cjs');
   assert.equal(fs.existsSync(mainCjsPath), true, 'electron/main.cjs must be compiled');
   const bundle = fs.readFileSync(mainCjsPath, 'utf-8');
   assert.match(bundle, /loadFile\(/);
-  assert.doesNotMatch(bundle, /http:\/\/127\.0\.0\.1|http:\/\/localhost/);
+  assert.match(bundle, /studyhub:checkForUpdates/);
+  assert.match(bundle, /studyhub:downloadUpdate/);
+  assert.match(bundle, /studyhub:quitAndInstall/);
+  assert.doesNotMatch(bundle, /\/api\/vocab|\/api\/quizzes|express\(\)/);
 });
 
 test('Every IPC channel in electron/preload.cjs is handled in electron/main.ts', () => {
@@ -32,10 +35,26 @@ test('Every IPC channel in electron/preload.cjs is handled in electron/main.ts',
     [...mainSrc.matchAll(/ipcMain\.handle\(\s*'([^']+)'/g)].map((m) => m[1]),
   );
 
-  assert.ok(invokedChannels.length >= 15, 'Expected at least 15 IPC channels');
+  assert.ok(invokedChannels.length >= 20, 'Expected at least 20 IPC channels including auto-updater');
   for (const ch of invokedChannels) {
     assert.ok(handledChannels.has(ch), `Missing ipcMain.handle for channel: ${ch}`);
   }
+});
+
+test('GitHub Releases auto-update configuration matches electron-updater requirements', () => {
+  const pkg = JSON.parse(fs.readFileSync(path.join(rootDir, 'package.json'), 'utf-8'));
+  assert.ok(pkg.dependencies['electron-updater'], 'electron-updater must be in dependencies');
+  assert.equal(pkg.build?.win?.verifyUpdateCodeSignature, false);
+  assert.equal(pkg.build?.nsis?.artifactName, 'StudyHub-Setup-${version}.exe');
+
+  const workflow = fs.readFileSync(
+    path.join(rootDir, '.github', 'workflows', 'release-windows.yml'),
+    'utf-8',
+  );
+  assert.match(workflow, /provider:\s*'github'/);
+  assert.match(workflow, /release\/latest\.yml/);
+  assert.match(workflow, /app-update\.yml/);
+  assert.match(workflow, /make_latest:\s*true/);
 });
 
 test('Fresh StudyHub data directory has zero preset examples and auto-generates AGENT_GUIDE.md', async () => {
