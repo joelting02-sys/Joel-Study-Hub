@@ -29,6 +29,26 @@ test('Every Tauri invoke command in studyhubApi.ts is registered in src-tauri/sr
   }
 });
 
+test('Async Tauri commands in src-tauri/src/lib.rs avoid borrowed State<\'_, _> and return Result', () => {
+  const libRs = fs.readFileSync(path.join(rootDir, 'src-tauri', 'src', 'lib.rs'), 'utf-8');
+  const asyncCommands = [
+    ...libRs.matchAll(/#\[tauri::command\]\s*async\s+fn\s+(\w+)\s*\(([\s\S]*?)\)\s*->\s*([^{]+)/g),
+  ];
+  assert.ok(asyncCommands.length >= 3, 'Expected at least 3 async Tauri commands');
+  for (const [, name, params, ret] of asyncCommands) {
+    assert.doesNotMatch(
+      params,
+      /State<|&/,
+      `Async command ${name} must not borrow State<'_, _> or references across .await`,
+    );
+    assert.match(
+      ret.trim(),
+      /^Result</,
+      `Async command ${name} must return Result<..., ...> to satisfy Tauri v2 'static future expansion`,
+    );
+  }
+});
+
 test('Tauri events listened by frontend are emitted by Rust backend', () => {
   const apiSrc = fs.readFileSync(path.join(rootDir, 'src', 'api', 'studyhubApi.ts'), 'utf-8');
   const libRs = fs.readFileSync(path.join(rootDir, 'src-tauri', 'src', 'lib.rs'), 'utf-8');

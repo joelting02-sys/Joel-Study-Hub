@@ -11,7 +11,7 @@ use models::{
     SaveResultResponse, StorageChangeEvent, UpdateVocabPatch, VocabFile, VocabInboxFile,
 };
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
-use std::path::PathBuf;
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use storage::StudyHubStorage;
@@ -81,10 +81,10 @@ fn restart_watcher(
 
 #[allow(clippy::too_many_arguments)]
 fn handle_fs_event(
-    path: &PathBuf,
-    quizzes_dir: &PathBuf,
-    inbox_dir: &PathBuf,
-    dict_dir: &PathBuf,
+    path: &Path,
+    quizzes_dir: &Path,
+    inbox_dir: &Path,
+    dict_dir: &Path,
     storage: &Arc<Mutex<StudyHubStorage>>,
     app: &AppHandle,
     last_quiz_emit: &Arc<Mutex<Instant>>,
@@ -175,11 +175,12 @@ fn set_data_dir(
 }
 
 #[tauri::command]
-async fn pick_data_dir(
-    app: AppHandle,
-    state: State<'_, AppState>,
-) -> Result<PickDataDirResponse, String> {
-    let current_dir = state.storage.lock().unwrap().data_dir().to_path_buf();
+async fn pick_data_dir(app: AppHandle) -> Result<PickDataDirResponse, String> {
+    let current_dir = {
+        let state = app.state::<AppState>();
+        let guard = state.storage.lock().unwrap();
+        guard.data_dir().to_path_buf()
+    };
     let app_clone = app.clone();
     let picked = tauri::async_runtime::spawn_blocking(move || {
         app_clone
@@ -192,6 +193,7 @@ async fn pick_data_dir(
     .await
     .map_err(|e| format!("打开系统文件夹选择框失败: {e}"))?;
 
+    let state = app.state::<AppState>();
     let Some(file_path) = picked else {
         let status = state.storage.lock().unwrap().get_status();
         return Ok(PickDataDirResponse {
@@ -427,15 +429,21 @@ fn get_update_state(state: State<'_, AppState>) -> AppUpdateState {
 }
 
 #[tauri::command]
-async fn check_for_updates(app: AppHandle, state: State<'_, AppState>) -> AppUpdateState {
-    let updater = Arc::clone(&state.updater);
-    updater.check_for_updates(&app).await
+async fn check_for_updates(app: AppHandle) -> Result<AppUpdateState, String> {
+    let updater = {
+        let state = app.state::<AppState>();
+        Arc::clone(&state.updater)
+    };
+    Ok(updater.check_for_updates(&app).await)
 }
 
 #[tauri::command]
-async fn download_update(app: AppHandle, state: State<'_, AppState>) -> AppUpdateState {
-    let updater = Arc::clone(&state.updater);
-    updater.download_update(&app).await
+async fn download_update(app: AppHandle) -> Result<AppUpdateState, String> {
+    let updater = {
+        let state = app.state::<AppState>();
+        Arc::clone(&state.updater)
+    };
+    Ok(updater.download_update(&app).await)
 }
 
 #[tauri::command]
