@@ -26,7 +26,8 @@ import type {
   VocabEntry,
 } from '../types/studyhub';
 import { gradeQuiz, type QuizGradeSummary } from '../lib/quizLogic';
-import { InteractiveText, type WordClickPayload } from './InteractiveText';
+import type { WordClickPayload } from './InteractiveText';
+import { MarkdownContent } from './MarkdownContent';
 
 interface QuizViewProps {
   quizzes: QuizFile[];
@@ -336,8 +337,9 @@ export const QuizView: React.FC<QuizViewProps> = ({
                   </div>
 
                   <div className={`${READING_SIZE_CLASS[fontScale]} text-slate-900 dark:text-slate-100`}>
-                    <InteractiveText
+                    <MarkdownContent
                       text={question.stem}
+                      interactive
                       glossary={activeQuiz.glossary}
                       source={`${activeQuiz.title} · Q${index + 1}`}
                       subject={activeQuiz.subject}
@@ -346,22 +348,58 @@ export const QuizView: React.FC<QuizViewProps> = ({
                     />
                   </div>
 
-                  <div className="grid gap-2 text-sm sm:grid-cols-2">
-                    <p className="text-red-700 dark:text-red-400">
-                      你的选择：
-                      {chosenIndex >= 0
-                        ? `${OPTION_LETTERS[chosenIndex]}. ${question.options[chosenIndex]}`
-                        : '已跳过'}
-                    </p>
-                    <p className="font-medium text-emerald-700 dark:text-emerald-400">
-                      正确答案：{OPTION_LETTERS[question.correct_index]}.{' '}
-                      {question.options[question.correct_index]}
-                    </p>
+                  <div className="grid gap-3 text-sm sm:grid-cols-2">
+                    <div className="space-y-1 text-red-700 dark:text-red-400">
+                      <span className="font-medium">你的选择：</span>
+                      {chosenIndex >= 0 ? (
+                        <div className="flex items-baseline gap-1.5">
+                          <span className="font-mono font-semibold">{OPTION_LETTERS[chosenIndex]}.</span>
+                          <MarkdownContent
+                            text={question.options[chosenIndex]}
+                            interactive
+                            compact
+                            glossary={activeQuiz.glossary}
+                            source={`${activeQuiz.title} · Q${index + 1}`}
+                            subject={activeQuiz.subject}
+                            vocabLookupMap={vocabLookupMap}
+                            onWordClick={handleQuizWordClick}
+                          />
+                        </div>
+                      ) : (
+                        <span>已跳过</span>
+                      )}
+                    </div>
+                    <div className="space-y-1 font-medium text-emerald-700 dark:text-emerald-400">
+                      <span>正确答案：</span>
+                      <div className="flex items-baseline gap-1.5">
+                        <span className="font-mono font-semibold">{OPTION_LETTERS[question.correct_index]}.</span>
+                        <MarkdownContent
+                          text={question.options[question.correct_index]}
+                          interactive
+                          compact
+                          glossary={activeQuiz.glossary}
+                          source={`${activeQuiz.title} · Q${index + 1}`}
+                          subject={activeQuiz.subject}
+                          vocabLookupMap={vocabLookupMap}
+                          onWordClick={handleQuizWordClick}
+                        />
+                      </div>
+                    </div>
                   </div>
 
-                  <p className="text-sm leading-relaxed text-slate-600 dark:text-slate-300">
-                    解析：{question.explanation_zh}
-                  </p>
+                  <div className="space-y-1 text-sm leading-relaxed text-slate-600 dark:text-slate-300">
+                    <p className="font-semibold text-slate-700 dark:text-slate-200">解析：</p>
+                    <MarkdownContent
+                      text={question.explanation_zh}
+                      interactive
+                      compact
+                      glossary={activeQuiz.glossary}
+                      source={`${activeQuiz.title} · Q${index + 1}`}
+                      subject={activeQuiz.subject}
+                      vocabLookupMap={vocabLookupMap}
+                      onWordClick={handleQuizWordClick}
+                    />
+                  </div>
                 </article>
               ))}
             </div>
@@ -429,13 +467,14 @@ export const QuizView: React.FC<QuizViewProps> = ({
             {currentQuestion.source && <span>{currentQuestion.source}</span>}
           </div>
 
-          {/* 英文题干（每个词均可点词翻译） */}
+          {/* 英文题干（支持 Markdown 排版 + 每个英文单词均可点词翻译） */}
           <div
             data-testid="quiz-question-stem"
             className={`mt-5 font-medium text-slate-900 dark:text-slate-50 ${READING_SIZE_CLASS[fontScale]}`}
           >
-            <InteractiveText
+            <MarkdownContent
               text={currentQuestion.stem}
+              interactive
               glossary={activeQuiz.glossary}
               source={questionSource}
               subject={activeQuiz.subject}
@@ -446,10 +485,12 @@ export const QuizView: React.FC<QuizViewProps> = ({
 
           {/* 提示区域 */}
           {isHintVisible && currentQuestion.hint && (
-            <div className="mt-5 rounded-lg border border-amber-200 bg-amber-50/70 px-4 py-3 text-sm text-amber-950 dark:border-amber-800/60 dark:bg-amber-950/30 dark:text-amber-200">
-              <span className="font-semibold">提示：</span>
-              <InteractiveText
+            <div className="mt-5 space-y-1 rounded-lg border border-amber-200 bg-amber-50/70 px-4 py-3 text-sm text-amber-950 dark:border-amber-800/60 dark:bg-amber-950/30 dark:text-amber-200">
+              <p className="font-semibold">提示：</p>
+              <MarkdownContent
                 text={currentQuestion.hint}
+                interactive
+                compact
                 glossary={activeQuiz.glossary}
                 source={questionSource}
                 subject={activeQuiz.subject}
@@ -513,8 +554,10 @@ export const QuizView: React.FC<QuizViewProps> = ({
                   <div
                     className={`min-w-0 flex-1 pt-0.5 text-slate-800 dark:text-slate-100 ${READING_SIZE_CLASS[fontScale]}`}
                   >
-                    <InteractiveText
+                    <MarkdownContent
                       text={optText}
+                      interactive
+                      compact
                       glossary={activeQuiz.glossary}
                       source={questionSource}
                       subject={activeQuiz.subject}
@@ -565,9 +608,18 @@ export const QuizView: React.FC<QuizViewProps> = ({
                   </span>
                 )}
               </div>
-              <p className="mt-2.5 text-base leading-relaxed text-slate-800 dark:text-slate-200">
-                {currentQuestion.explanation_zh}
-              </p>
+              <div className="mt-2.5 text-base leading-relaxed text-slate-800 dark:text-slate-200">
+                <MarkdownContent
+                  text={currentQuestion.explanation_zh}
+                  interactive
+                  compact
+                  glossary={activeQuiz.glossary}
+                  source={questionSource}
+                  subject={activeQuiz.subject}
+                  vocabLookupMap={vocabLookupMap}
+                  onWordClick={handleQuizWordClick}
+                />
+              </div>
             </div>
           )}
 

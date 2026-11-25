@@ -199,9 +199,20 @@ export class StudyHubStorage extends EventEmitter {
     fs.mkdirSync(resolved, { recursive: true });
 
     this.dataDir = resolved;
+    let existingCfg: Record<string, unknown> = {};
+    try {
+      if (fs.existsSync(CONFIG_FILE_PATH)) {
+        const parsed = JSON.parse(fs.readFileSync(CONFIG_FILE_PATH, 'utf-8'));
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          existingCfg = parsed as Record<string, unknown>;
+        }
+      }
+    } catch {
+      existingCfg = {};
+    }
     atomicWriteFileSync(
       CONFIG_FILE_PATH,
-      JSON.stringify({ dataDir: this.dataDir }, null, 2),
+      JSON.stringify({ ...existingCfg, dataDir: this.dataDir }, null, 2),
     );
 
     this.initializeDataDir();

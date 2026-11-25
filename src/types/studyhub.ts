@@ -94,7 +94,7 @@ export interface QuizResultFile {
   _filename?: string;
 }
 
-export type LookupSource = 'glossary' | 'acronym' | 'ecdict' | 'not_found';
+export type LookupSource = 'glossary' | 'acronym' | 'ecdict' | 'api' | 'not_found';
 
 export interface LookupResult {
   /** 查找到的标准词形 / 词组 */
@@ -108,6 +108,43 @@ export interface LookupResult {
   /** 词形还原说明，如 "went → go" */
   lemmaNote?: string;
   found: boolean;
+}
+
+export type TranslationMode = 'auto_fallback' | 'always_api' | 'manual';
+
+export interface TranslationApiStatus {
+  configured: boolean;
+  baseUrl: string;
+  model: string;
+  endpointHost: string;
+  hasApiKey: boolean;
+  apiKeyPreview?: string;
+  error?: string;
+}
+
+export interface SaveTranslationConfigInput {
+  baseUrl: string;
+  /** 留空表示保持当前已保存的 API Key；传 clearApiKey=true 可清除 */
+  apiKey?: string;
+  clearApiKey?: boolean;
+  model: string;
+}
+
+export interface FetchModelsInput {
+  baseUrl?: string;
+  apiKey?: string;
+}
+
+export interface FetchModelsResult {
+  models: string[];
+  count: number;
+  note?: string;
+}
+
+export interface TranslateWordInput {
+  surface: string;
+  sentence?: string;
+  subject?: string;
 }
 
 export interface EcdictRecord {
@@ -124,6 +161,8 @@ export type FontScale = 'normal' | 'large' | 'xlarge';
 export interface AppPreferences {
   theme: 'light' | 'dark';
   fontScale: FontScale;
+  translationMode: TranslationMode;
+  autoAddTranslatedVocab: boolean;
 }
 
 export interface FolderStatus {

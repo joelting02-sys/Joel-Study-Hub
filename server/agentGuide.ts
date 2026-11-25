@@ -75,6 +75,7 @@ Write UTF-8 JSON with the following structure:
 - \`glossary\`: Optional key-value map of domain phrases (lowercase recommended). Click-to-translate prioritizes \`glossary\` with **longest-phrase match first**.
 - \`questions[].type\`: Only \`"multiple_choice"\` (4 options) or \`"true_false"\` (\`["True", "False"]\`).
 - \`questions[].correct_index\`: 0-based integer index into \`options\`.
+- **Markdown Formatting (\`stem\`, \`options\`, \`hint\`, \`explanation_zh\`)**: StudyHub renders standard Markdown cleanly (headings, \`**bold**\`, \`*italic*\`, \`inline code\`, fenced code blocks, tables, blockquotes, bullet lists, and numbered lists). Always place each numbered item on its own line (\`1. ...\\n2. ...\\n3. ...\\n4. ...\`) so questions and explanations stay neatly aligned.
 
 ---
 

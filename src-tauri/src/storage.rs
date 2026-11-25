@@ -153,6 +153,10 @@ impl StudyHubStorage {
         &self.data_dir
     }
 
+    pub fn config_path(&self) -> &Path {
+        &self.config_path
+    }
+
     pub fn watch_dirs(&self) -> (PathBuf, PathBuf, PathBuf) {
         (
             self.data_dir.join("quizzes"),
@@ -209,10 +213,13 @@ impl StudyHubStorage {
             .to_string();
         self.data_dir = PathBuf::from(&clean_str);
 
-        let cfg = SavedConfig {
-            data_dir: clean_str,
-        };
-        if let Ok(json) = serde_json::to_string_pretty(&cfg) {
+        let mut root_obj = fs::read_to_string(&self.config_path)
+            .ok()
+            .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+            .and_then(|v| v.as_object().cloned())
+            .unwrap_or_default();
+        root_obj.insert("dataDir".to_string(), serde_json::Value::String(clean_str));
+        if let Ok(json) = serde_json::to_string_pretty(&serde_json::Value::Object(root_obj)) {
             let _ = atomic_write_file(&self.config_path, &json);
         }
 

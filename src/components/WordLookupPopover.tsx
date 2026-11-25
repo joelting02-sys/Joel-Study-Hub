@@ -1,17 +1,20 @@
 /**
  * 点词翻译弹出小卡片
- * - 显示单词原形 + 音标 + 词性 + 中文意思（最多 3 义项）
- * - 若已在单词库，显示「学习中」或「已学会」与「已在单词库 ✓」
- * - 若词典查无释义，显示「暂无释义」并支持手动输入中文意思后加入单词库
+ * - 显示单词原形 + 音标 + 词性 + 中文意思
+ * - 支持离线词典（glossary / 缩写 / ECDICT）与外部翻译模型 API 接口无缝衔接
+ * - 支持一键调用翻译接口翻译 / 重译，并一键加入单词库或更新已有释义
  * - 点击空白处或按 Esc 关闭
  */
 
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { Check, Plus, X } from 'lucide-react';
+import { Check, Languages, Loader2, Plus, RefreshCw, X } from 'lucide-react';
 import type { LookupResult, VocabEntry } from '../types/studyhub';
 
 export interface ActiveLookupState {
   loading: boolean;
+  translatingApi?: boolean;
+  apiError?: string;
+  autoSaved?: boolean;
   result: LookupResult | null;
   sentence: string;
   source: string;
@@ -22,6 +25,8 @@ export interface ActiveLookupState {
 interface WordLookupPopoverProps {
   lookup: ActiveLookupState | null;
   existingEntry: VocabEntry | null;
+  translationConfigured: boolean;
+  onRequestApiTranslate: () => Promise<void>;
   onAddVocab: (payload: {
     word: string;
     meaning_zh: string;
@@ -31,6 +36,7 @@ interface WordLookupPopoverProps {
     source: string;
     subject: string;
   }) => Promise<void>;
+  onUpdateExistingMeaning: (id: string, meaningZh: string) => Promise<void>;
   onClose: () => void;
 }
 
@@ -38,18 +44,24 @@ const SOURCE_LABELS: Record<LookupResult['source'], string> = {
   glossary: '本测验术语',
   acronym: '专业缩写',
   ecdict: '离线词典',
+  api: '翻译接口',
   not_found: '词典未收录',
 };
 
 export const WordLookupPopover: React.FC<WordLookupPopoverProps> = ({
   lookup,
   existingEntry,
+  translationConfigured,
+  onRequestApiTranslate,
   onAddVocab,
+  onUpdateExistingMeaning,
   onClose,
 }) => {
   const cardRef = useRef<HTMLDivElement | null>(null);
   const [manualMeaning, setManualMeaning] = useState('');
   const [saving, setSaving] = useState(false);
+  const [updatingMeaning, setUpdatingMeaning] = useState(false);
+  const [updatedNotice, setUpdatedNotice] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [position, setPosition] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
 
@@ -57,13 +69,15 @@ export const WordLookupPopover: React.FC<WordLookupPopoverProps> = ({
     setManualMeaning('');
     setErrorMsg('');
     setSaving(false);
+    setUpdatingMeaning(false);
+    setUpdatedNotice(false);
   }, [lookup?.result?.word, lookup?.result?.surface]);
 
   // 自动计算卡片位置，确保不会超出屏幕边界
   useLayoutEffect(() => {
     if (!lookup) return;
-    const cardWidth = 340;
-    const cardHeight = cardRef.current?.offsetHeight || 220;
+    const cardWidth = 360;
+    const cardHeight = cardRef.current?.offsetHeight || 240;
     const margin = 12;
 
     let left = lookup.anchorRect.left;
@@ -81,7 +95,7 @@ export const WordLookupPopover: React.FC<WordLookupPopoverProps> = ({
     }
 
     setPosition({ top, left });
-  }, [lookup, lookup?.loading, lookup?.result]);
+  }, [lookup, lookup?.loading, lookup?.translatingApi, lookup?.result, lookup?.apiError]);
 
   // Esc 键关闭 + 点击卡片外空白处关闭
   useEffect(() => {
@@ -113,13 +127,19 @@ export const WordLookupPopover: React.FC<WordLookupPopoverProps> = ({
 
   if (!lookup) return null;
 
-  const { result, loading } = lookup;
+  const { result, loading, translatingApi, apiError, autoSaved } = lookup;
   const effectiveMeaning = result?.found ? result.meaning_zh : manualMeaning.trim();
+  const canUpdateExistingMeaning = Boolean(
+    existingEntry &&
+      result?.found &&
+      result.meaning_zh.trim() &&
+      result.meaning_zh.trim() !== existingEntry.meaning_zh.trim(),
+  );
 
   const handleSave = async () => {
     if (!result) return;
     if (!result.found && !manualMeaning.trim()) {
-      setErrorMsg('请先输入中文意思再加入单词库');
+      setErrorMsg('请先输入中文意思，或点击「调用翻译接口」');
       return;
     }
     setSaving(true);
@@ -141,19 +161,36 @@ export const WordLookupPopover: React.FC<WordLookupPopoverProps> = ({
     }
   };
 
+  const handleSyncMeaning = async () => {
+    if (!existingEntry || !result?.meaning_zh.trim()) return;
+    setUpdatingMeaning(true);
+    setErrorMsg('');
+    try {
+      await onUpdateExistingMeaning(existingEntry.id, result.meaning_zh.trim());
+      setUpdatedNotice(true);
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : '更新释义失败');
+    } finally {
+      setUpdatingMeaning(false);
+    }
+  };
+
   return (
     <div
       ref={cardRef}
       role="dialog"
       aria-label="点词翻译卡片"
       data-testid="word-lookup-popover"
-      style={{ top: `${position.top}px`, left: `${position.left}px`, width: '340px' }}
-      className="fixed z-50 rounded-xl border border-slate-200 bg-white p-4 shadow-xl shadow-slate-900/10 dark:border-slate-700 dark:bg-[#131C31] dark:shadow-black/40"
+      style={{ top: `${position.top}px`, left: `${position.left}px`, width: '360px' }}
+      className="fixed z-50 max-w-[calc(100vw-24px)] rounded-xl border border-slate-200 bg-white p-4 shadow-xl shadow-slate-900/10 dark:border-slate-700 dark:bg-[#131C31] dark:shadow-black/40"
     >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           {loading || !result ? (
-            <div className="text-base font-semibold text-slate-500 dark:text-slate-400">正在查询…</div>
+            <div className="flex items-center gap-2 text-base font-semibold text-slate-500 dark:text-slate-400">
+              <Loader2 className="h-4 w-4 animate-spin text-blue-600 dark:text-blue-400" />
+              <span>正在查询…</span>
+            </div>
           ) : (
             <>
               <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
@@ -167,9 +204,21 @@ export const WordLookupPopover: React.FC<WordLookupPopoverProps> = ({
                 )}
               </div>
               <div className="mt-1 flex flex-wrap items-center gap-x-2 text-xs text-slate-500 dark:text-slate-400">
-                {result.pos && <span className="font-medium text-slate-700 dark:text-slate-300">{result.pos}</span>}
+                {result.pos && (
+                  <span className="font-medium text-slate-700 dark:text-slate-300">
+                    {result.pos}
+                  </span>
+                )}
                 {result.pos && <span aria-hidden="true">·</span>}
-                <span>{SOURCE_LABELS[result.source]}</span>
+                <span
+                  className={
+                    result.source === 'api'
+                      ? 'font-semibold text-blue-600 dark:text-blue-400'
+                      : ''
+                  }
+                >
+                  {SOURCE_LABELS[result.source]}
+                </span>
                 {result.lemmaNote && (
                   <>
                     <span aria-hidden="true">·</span>
@@ -193,14 +242,21 @@ export const WordLookupPopover: React.FC<WordLookupPopoverProps> = ({
 
       {!loading && result && (
         <div className="mt-3">
-          {result.found ? (
+          {translatingApi ? (
+            <div className="flex items-center gap-2 rounded-lg border border-blue-100 bg-blue-50/70 px-3 py-2.5 text-sm text-blue-700 dark:border-blue-900/60 dark:bg-blue-950/40 dark:text-blue-300">
+              <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
+              <span>正在调用翻译模型接口…</span>
+            </div>
+          ) : result.found ? (
             <p className="text-base leading-relaxed font-medium text-slate-800 dark:text-slate-100">
               {result.meaning_zh}
             </p>
           ) : (
             <div className="space-y-2">
-              <p className="text-sm font-medium text-slate-500 dark:text-slate-400">
-                暂无释义（可手动输入中文意思保存）
+              <p className="text-xs leading-relaxed text-slate-500 dark:text-slate-400">
+                {translationConfigured
+                  ? '离线词典未收录，可点击下方按钮调用翻译接口，或手动输入中文释义。'
+                  : '离线词典未收录。可在「设置 → 翻译模型 API 接口」接入你的翻译模型，或直接手动输入中文保存。'}
               </p>
               <label className="block">
                 <span className="sr-only">手动输入中文意思</span>
@@ -222,6 +278,24 @@ export const WordLookupPopover: React.FC<WordLookupPopoverProps> = ({
                 />
               </label>
             </div>
+          )}
+
+          {apiError && (
+            <p className="mt-2 text-xs leading-relaxed text-amber-700 dark:text-amber-400" role="alert">
+              翻译接口提示：{apiError}
+            </p>
+          )}
+
+          {autoSaved && (
+            <p className="mt-2 text-xs font-medium text-emerald-700 dark:text-emerald-400">
+              已通过翻译接口自动加入单词库 ✓
+            </p>
+          )}
+
+          {updatedNotice && (
+            <p className="mt-2 text-xs font-medium text-emerald-700 dark:text-emerald-400">
+              已同步更新单词库释义 ✓
+            </p>
           )}
 
           {existingEntry && (
@@ -247,23 +321,56 @@ export const WordLookupPopover: React.FC<WordLookupPopoverProps> = ({
             </p>
           )}
 
-          <div className="mt-3.5 flex items-center justify-between gap-2">
-            {existingEntry ? (
+          <div className="mt-3.5 flex flex-wrap items-center gap-2">
+            {/* 手动触发或使用翻译模型按语境重译 */}
+            {translationConfigured && !translatingApi && (
               <button
                 type="button"
-                onClick={() => void handleSave()}
-                disabled={saving}
-                className="inline-flex w-full items-center justify-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-800 transition-colors hover:bg-emerald-100 whitespace-nowrap dark:border-emerald-800/60 dark:bg-emerald-950/50 dark:text-emerald-300 dark:hover:bg-emerald-900/50"
+                onClick={() => void onRequestApiTranslate()}
+                className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-50 whitespace-nowrap dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
               >
-                <Check className="h-4 w-4" />
-                <span>已在单词库 ✓</span>
+                {result.source === 'api' ? (
+                  <>
+                    <RefreshCw className="h-3.5 w-3.5" />
+                    <span>重译</span>
+                  </>
+                ) : (
+                  <>
+                    <Languages className="h-3.5 w-3.5 text-blue-600 dark:text-blue-400" />
+                    <span>模型翻译</span>
+                  </>
+                )}
               </button>
+            )}
+
+            {existingEntry ? (
+              canUpdateExistingMeaning ? (
+                <button
+                  type="button"
+                  onClick={() => void handleSyncMeaning()}
+                  disabled={updatingMeaning}
+                  className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white transition-colors hover:bg-blue-700 disabled:opacity-60 whitespace-nowrap dark:bg-blue-500 dark:hover:bg-blue-600"
+                >
+                  <Check className="h-4 w-4" />
+                  <span>{updatingMeaning ? '更新中…' : '更新词库释义'}</span>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => void handleSave()}
+                  disabled={saving || translatingApi}
+                  className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-800 transition-colors hover:bg-emerald-100 whitespace-nowrap dark:border-emerald-800/60 dark:bg-emerald-950/50 dark:text-emerald-300 dark:hover:bg-emerald-900/50"
+                >
+                  <Check className="h-4 w-4" />
+                  <span>已在单词库 ✓</span>
+                </button>
+              )
             ) : (
               <button
                 type="button"
                 onClick={() => void handleSave()}
-                disabled={saving}
-                className="inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white transition-colors hover:bg-blue-700 disabled:opacity-60 whitespace-nowrap dark:bg-blue-500 dark:hover:bg-blue-600"
+                disabled={saving || translatingApi}
+                className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white transition-colors hover:bg-blue-700 disabled:opacity-60 whitespace-nowrap dark:bg-blue-500 dark:hover:bg-blue-600"
               >
                 <Plus className="h-4 w-4" />
                 <span>{saving ? '保存中…' : '加入单词库'}</span>

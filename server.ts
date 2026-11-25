@@ -4,12 +4,19 @@
  * - 提供本地文件读写 API 与 SSE 实时推送
  */
 
+import 'dotenv/config';
 import express from 'express';
 import fs from 'fs';
 import http from 'http';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';
 import { StudyHubStorage, type StorageChangeEvent } from './server/storage.ts';
+import {
+  fetchAvailableModels,
+  getTranslationApiStatus,
+  saveTranslationConfig,
+  translateWordWithApi,
+} from './server/translator.ts';
 
 function readCliArg(flag: string): string | undefined {
   const idx = process.argv.indexOf(flag);
@@ -97,6 +104,68 @@ async function startServer() {
       res.json(status);
     } catch (err) {
       res.status(400).json({ error: err instanceof Error ? err.message : '导入词典失败' });
+    }
+  });
+
+  // ==================== 外部翻译模型 API 代理 ====================
+  app.get('/api/translate/status', (_req, res) => {
+    res.json(getTranslationApiStatus());
+  });
+
+  app.post('/api/translate/config', (req, res) => {
+    try {
+      const body = (req.body || {}) as {
+        baseUrl?: unknown;
+        apiKey?: unknown;
+        clearApiKey?: unknown;
+        model?: unknown;
+      };
+      const status = saveTranslationConfig({
+        baseUrl: typeof body.baseUrl === 'string' ? body.baseUrl : '',
+        apiKey: typeof body.apiKey === 'string' ? body.apiKey : undefined,
+        clearApiKey: Boolean(body.clearApiKey),
+        model: typeof body.model === 'string' ? body.model : '',
+      });
+      res.json(status);
+    } catch (err) {
+      res.status(400).json({ error: err instanceof Error ? err.message : '保存翻译配置失败' });
+    }
+  });
+
+  app.post('/api/translate/models', async (req, res) => {
+    try {
+      const body = (req.body || {}) as { baseUrl?: unknown; apiKey?: unknown };
+      const result = await fetchAvailableModels({
+        baseUrl: typeof body.baseUrl === 'string' ? body.baseUrl : undefined,
+        apiKey: typeof body.apiKey === 'string' ? body.apiKey : undefined,
+      });
+      res.json(result);
+    } catch (err) {
+      res.status(400).json({ error: err instanceof Error ? err.message : '侦测模型列表失败' });
+    }
+  });
+
+  app.post('/api/dict/translate', async (req, res) => {
+    try {
+      const { surface, sentence, subject } = (req.body || {}) as {
+        surface?: unknown;
+        sentence?: unknown;
+        subject?: unknown;
+      };
+      if (typeof surface !== 'string' || !surface.trim()) {
+        res.status(400).json({ error: '缺少待翻译的单词或短语' });
+        return;
+      }
+      const translated = await translateWordWithApi({
+        surface,
+        sentence: typeof sentence === 'string' ? sentence : '',
+        subject: typeof subject === 'string' ? subject : '',
+      });
+      res.json(translated);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '调用翻译接口失败';
+      const statusCode = message.includes('尚未完成') ? 503 : 502;
+      res.status(statusCode).json({ error: message });
     }
   });
 

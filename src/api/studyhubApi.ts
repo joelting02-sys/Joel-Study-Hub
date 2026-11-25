@@ -8,10 +8,15 @@ import { invoke, isTauri } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import type {
   AppUpdateState,
+  FetchModelsInput,
+  FetchModelsResult,
   FolderStatus,
   LookupResult,
   QuizFile,
   QuizResultFile,
+  SaveTranslationConfigInput,
+  TranslateWordInput,
+  TranslationApiStatus,
   VocabEntry,
   VocabFile,
   VocabStatus,
@@ -213,6 +218,53 @@ export const studyhubApi = {
     return requestJson('/api/dict/import-csv', {
       method: 'POST',
       body: JSON.stringify({ filename, content }),
+    });
+  },
+
+  async getTranslationStatus(): Promise<TranslationApiStatus> {
+    if (isTauriDesktop()) {
+      return invoke<TranslationApiStatus>('get_translation_status');
+    }
+    try {
+      return await requestJson<TranslationApiStatus>('/api/translate/status');
+    } catch {
+      return {
+        configured: false,
+        baseUrl: '',
+        model: '',
+        endpointHost: '',
+        hasApiKey: false,
+      };
+    }
+  },
+
+  saveTranslationConfig(input: SaveTranslationConfigInput): Promise<TranslationApiStatus> {
+    if (isTauriDesktop()) {
+      return invoke<TranslationApiStatus>('save_translation_config', { input });
+    }
+    return requestJson<TranslationApiStatus>('/api/translate/config', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    });
+  },
+
+  fetchTranslationModels(input: FetchModelsInput = {}): Promise<FetchModelsResult> {
+    if (isTauriDesktop()) {
+      return invoke<FetchModelsResult>('fetch_translation_models', { input });
+    }
+    return requestJson<FetchModelsResult>('/api/translate/models', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    });
+  },
+
+  translateWord(input: TranslateWordInput): Promise<LookupResult> {
+    if (isTauriDesktop()) {
+      return invoke<LookupResult>('translate_word_cmd', { input });
+    }
+    return requestJson<LookupResult>('/api/dict/translate', {
+      method: 'POST',
+      body: JSON.stringify(input),
     });
   },
 

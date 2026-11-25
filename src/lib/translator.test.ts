@@ -1,0 +1,273 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import {
+  fetchAvailableModels,
+  getTranslationApiStatus,
+  parseModelsListPayload,
+  parseModelTranslationPayload,
+  saveTranslationConfig,
+  translateWordWithApi,
+  validateTranslationEndpoint,
+} from '../../server/translator.ts';
+
+function makeTempConfigPath(label: string): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), `studyhub-${label}-`));
+  return path.join(dir, 'studyhub-config.json');
+}
+
+test('validateTranslationEndpoint permits public HTTPS endpoints and blocks private/loopback/metadata hosts', () => {
+  assert.equal(validateTranslationEndpoint('https://ark.cn-beijing.volces.com/api/v3').ok, true);
+  assert.equal(validateTranslationEndpoint('https://api.deepseek.com/v1').ok, true);
+
+  assert.equal(validateTranslationEndpoint('http://localhost:8000/v1').ok, false);
+  assert.equal(validateTranslationEndpoint('http://127.0.0.1:11434/v1').ok, false);
+  assert.equal(validateTranslationEndpoint('http://169.254.169.254/latest/meta-data').ok, false);
+  assert.equal(validateTranslationEndpoint('http://10.0.0.1/v1').ok, false);
+  assert.equal(validateTranslationEndpoint('http://192.168.1.5/v1').ok, false);
+  assert.equal(validateTranslationEndpoint('http://metadata.google.internal/v1').ok, false);
+  assert.equal(validateTranslationEndpoint('file:///etc/passwd').ok, false);
+});
+
+test('saveTranslationConfig persists config safely and never leaks raw API keys', () => {
+  const cfgPath = makeTempConfigPath('save');
+  try {
+    const emptyStatus = getTranslationApiStatus({}, cfgPath);
+    assert.equal(emptyStatus.configured, false);
+    assert.equal(emptyStatus.hasApiKey, false);
+
+    const placeholderEnvStatus = getTranslationApiStatus(
+      {
+        TRANSLATE_API_BASE_URL: 'magpie',
+        TRANSLATE_API_KEY: 'placeholder',
+        TRANSLATE_API_MODEL: 'placeholder',
+      },
+      cfgPath,
+    );
+    assert.equal(placeholderEnvStatus.configured, false);
+    assert.equal(placeholderEnvStatus.baseUrl, '');
+    assert.equal(placeholderEnvStatus.hasApiKey, false);
+    assert.equal(placeholderEnvStatus.error, undefined);
+
+    const saved = saveTranslationConfig(
+      {
+        baseUrl: 'https://ark.cn-beijing.volces.com/api/v3/',
+        apiKey: 'ark-secret-1234567890',
+        model: 'doubao-seed-translation-250915',
+      },
+      cfgPath,
+    );
+    assert.equal(saved.configured, true);
+    assert.equal(saved.baseUrl, 'https://ark.cn-beijing.volces.com/api/v3');
+    assert.equal(saved.endpointHost, 'ark.cn-beijing.volces.com');
+    assert.equal(saved.model, 'doubao-seed-translation-250915');
+    assert.equal(saved.hasApiKey, true);
+    assert.equal(saved.apiKeyPreview, 'ark-****7890');
+    assert.equal('apiKey' in saved, false);
+
+    // Updating model without resending apiKey preserves existing key
+    const updated = saveTranslationConfig(
+      {
+        baseUrl: 'https://ark.cn-beijing.volces.com/api/v3',
+        model: 'ep-20250101-demo',
+      },
+      cfgPath,
+    );
+    assert.equal(updated.model, 'ep-20250101-demo');
+    assert.equal(updated.hasApiKey, true);
+    assert.equal(updated.apiKeyPreview, 'ark-****7890');
+
+    // Clearing key removes it cleanly
+    const cleared = saveTranslationConfig(
+      {
+        baseUrl: 'https://ark.cn-beijing.volces.com/api/v3',
+        model: 'ep-20250101-demo',
+        clearApiKey: true,
+      },
+      cfgPath,
+    );
+    assert.equal(cleared.hasApiKey, false);
+    assert.equal(cleared.apiKeyPreview, '');
+  } finally {
+    fs.rmSync(path.dirname(cfgPath), { recursive: true, force: true });
+  }
+});
+
+test('parseModelsListPayload and fetchAvailableModels detect models and gracefully fallback for Volcengine Ark', async () => {
+  assert.deepEqual(
+    parseModelsListPayload({
+      data: [
+        { id: 'doubao-1-5-pro-32k' },
+        { id: 'doubao-seed-translation-250915' },
+        { id: 'doubao-1-5-pro-32k' },
+      ],
+    }),
+    ['doubao-1-5-pro-32k', 'doubao-seed-translation-250915'],
+  );
+
+  const cfgPath = makeTempConfigPath('models');
+  try {
+    let fetchedUrl = '';
+    let fetchedAuth = '';
+    const fakeOpenAiFetch: typeof fetch = async (url, init) => {
+      fetchedUrl = String(url);
+      fetchedAuth = (init?.headers as Record<string, string>)?.Authorization || '';
+      return new Response(
+        JSON.stringify({
+          data: [{ id: 'model-b' }, { id: 'model-a' }],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    };
+
+    const detected = await fetchAvailableModels(
+      { baseUrl: 'https://api.example.com/v1/chat/completions', apiKey: 'key-xyz' },
+      {},
+      cfgPath,
+      fakeOpenAiFetch,
+    );
+    assert.equal(fetchedUrl, 'https://api.example.com/v1/models');
+    assert.equal(fetchedAuth, 'Bearer key-xyz');
+    assert.deepEqual(detected.models, ['model-a', 'model-b']);
+    assert.equal(detected.count, 2);
+
+    // Volcengine Ark /models non-200 fallback returns doubao-seed-translation-250915 with a helpful note
+    const fakeArk404Fetch: typeof fetch = async () => new Response('Not Found', { status: 404 });
+    const arkFallback = await fetchAvailableModels(
+      { baseUrl: 'https://ark.cn-beijing.volces.com/api/v3', apiKey: 'ark-key' },
+      {},
+      cfgPath,
+      fakeArk404Fetch,
+    );
+    assert.deepEqual(arkFallback.models, ['doubao-seed-translation-250915']);
+    assert.equal(arkFallback.count, 1);
+    assert.ok(arkFallback.note && arkFallback.note.includes('doubao') === false ? arkFallback.note.includes('豆包') : true);
+  } finally {
+    fs.rmSync(path.dirname(cfgPath), { recursive: true, force: true });
+  }
+});
+
+test('parseModelTranslationPayload parses OpenAI choices, Doubao responses output, and code-fenced JSON', () => {
+  const openaiRes = parseModelTranslationPayload(
+    {
+      choices: [
+        {
+          message: {
+            content:
+              '```json\n{"word":"amortize","phonetic":"/ˈæmərtaɪz/","pos":"v.","meaning_zh":"摊销；分期偿还"}\n```',
+          },
+        },
+      ],
+    },
+    'amortized',
+  );
+  assert.equal(openaiRes.word, 'amortize');
+  assert.equal(openaiRes.phonetic, 'ˈæmərtaɪz');
+  assert.equal(openaiRes.pos, 'v.');
+  assert.equal(openaiRes.meaning_zh, '摊销；分期偿还');
+  assert.equal(openaiRes.source, 'api');
+  assert.equal(openaiRes.lemmaNote, 'amortized → amortize');
+
+  const doubaoRes = parseModelTranslationPayload(
+    {
+      output: [
+        {
+          type: 'message',
+          content: [{ type: 'output_text', text: '摊销' }],
+        },
+      ],
+    },
+    'amortization',
+  );
+  assert.equal(doubaoRes.word, 'amortization');
+  assert.equal(doubaoRes.meaning_zh, '摊销');
+  assert.equal(doubaoRes.source, 'api');
+});
+
+test('translateWordWithApi routes doubao-seed-translation to /responses and general models to /chat/completions', async () => {
+  const cfgPath = makeTempConfigPath('translate');
+  try {
+    // 1. Doubao Seed Translation -> /responses with translation_options
+    let capturedUrl = '';
+    let capturedAuth = '';
+    let capturedBody: Record<string, unknown> = {};
+
+    const fakeDoubaoFetch: typeof fetch = async (url, init) => {
+      capturedUrl = String(url);
+      capturedAuth = (init?.headers as Record<string, string>)?.Authorization || '';
+      capturedBody = JSON.parse(String(init?.body || '{}'));
+      return new Response(
+        JSON.stringify({
+          output: [
+            {
+              role: 'assistant',
+              content: [{ type: 'output_text', text: '可扩展性' }],
+            },
+          ],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    };
+
+    const doubaoResult = await translateWordWithApi(
+      { surface: 'scalability' },
+      {
+        TRANSLATE_API_BASE_URL: 'https://ark.cn-beijing.volces.com/api/v3',
+        TRANSLATE_API_KEY: 'ark-dummy-key',
+        TRANSLATE_API_MODEL: 'doubao-seed-translation-250915',
+      },
+      fakeDoubaoFetch,
+      cfgPath,
+    );
+
+    assert.equal(capturedUrl, 'https://ark.cn-beijing.volces.com/api/v3/responses');
+    assert.equal(capturedAuth, 'Bearer ark-dummy-key');
+    assert.equal(capturedBody.model, 'doubao-seed-translation-250915');
+    assert.equal(doubaoResult.meaning_zh, '可扩展性');
+    assert.equal(doubaoResult.source, 'api');
+
+    // 2. General Ark/OpenAI model -> /chat/completions
+    const fakeChatFetch: typeof fetch = async (url, init) => {
+      capturedUrl = String(url);
+      capturedAuth = (init?.headers as Record<string, string>)?.Authorization || '';
+      capturedBody = JSON.parse(String(init?.body || '{}'));
+      return new Response(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                content: '{"word":"scalability","phonetic":"ˌskeɪləˈbɪləti","pos":"n.","meaning_zh":"可扩展性"}',
+              },
+            },
+          ],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    };
+
+    const chatResult = await translateWordWithApi(
+      {
+        surface: 'scalability',
+        sentence: 'Cloud platforms improve scalability.',
+        subject: 'ICT',
+      },
+      {
+        TRANSLATE_API_BASE_URL: 'https://ark.cn-beijing.volces.com/api/v3',
+        TRANSLATE_API_KEY: 'ark-dummy-key',
+        TRANSLATE_API_MODEL: 'ep-20250501-demo',
+      },
+      fakeChatFetch,
+      cfgPath,
+    );
+
+    assert.equal(capturedUrl, 'https://ark.cn-beijing.volces.com/api/v3/chat/completions');
+    assert.equal(capturedAuth, 'Bearer ark-dummy-key');
+    assert.equal(capturedBody.model, 'ep-20250501-demo');
+    assert.equal(chatResult.meaning_zh, '可扩展性');
+    assert.equal(chatResult.phonetic, 'ˌskeɪləˈbɪləti');
+  } finally {
+    fs.rmSync(path.dirname(cfgPath), { recursive: true, force: true });
+  }
+});

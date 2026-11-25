@@ -5,7 +5,7 @@
  * - 通过 SSE (/api/events) 实时响应 quizzes/ 和 vocab_inbox/ 文件变更，无需重启
  */
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ClipboardCheck,
   Layers,
@@ -19,9 +19,13 @@ import {
 import type {
   AppPreferences,
   AppUpdateState,
+  FetchModelsInput,
   FolderStatus,
+  LookupResult,
   QuizFile,
   QuizResultFile,
+  SaveTranslationConfigInput,
+  TranslationApiStatus,
   VocabEntry,
   VocabStatus,
 } from './types/studyhub';
@@ -52,12 +56,22 @@ function loadPreferences(): AppPreferences {
           parsed.fontScale === 'large' || parsed.fontScale === 'xlarge'
             ? parsed.fontScale
             : 'normal',
+        translationMode:
+          parsed.translationMode === 'always_api' || parsed.translationMode === 'manual'
+            ? parsed.translationMode
+            : 'auto_fallback',
+        autoAddTranslatedVocab: Boolean(parsed.autoAddTranslatedVocab),
       };
     }
   } catch {
     // 忽略本地存储读取异常
   }
-  return { theme: 'light', fontScale: 'normal' };
+  return {
+    theme: 'light',
+    fontScale: 'normal',
+    translationMode: 'auto_fallback',
+    autoAddTranslatedVocab: false,
+  };
 }
 
 export default function App() {
@@ -69,12 +83,14 @@ export default function App() {
   const [quizzes, setQuizzes] = useState<QuizFile[]>([]);
   const [results, setResults] = useState<QuizResultFile[]>([]);
   const [folderStatus, setFolderStatus] = useState<FolderStatus | null>(null);
+  const [translationStatus, setTranslationStatus] = useState<TranslationApiStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string>('');
   const [liveBanner, setLiveBanner] = useState<string>('');
   const [updateState, setUpdateState] = useState<AppUpdateState | null>(null);
 
   const [activeLookup, setActiveLookup] = useState<ActiveLookupState | null>(null);
+  const lookupSeqRef = useRef(0);
 
   // 同步深色模式到 <html>
   useEffect(() => {
@@ -95,19 +111,31 @@ export default function App() {
     setPreferences((prev) => ({ ...prev, ...patch }));
   }, []);
 
+  const handleSaveTranslationConfig = useCallback(async (input: SaveTranslationConfigInput) => {
+    const next = await studyhubApi.saveTranslationConfig(input);
+    setTranslationStatus(next);
+    return next;
+  }, []);
+
+  const handleFetchTranslationModels = useCallback((input: FetchModelsInput) => {
+    return studyhubApi.fetchTranslationModels(input);
+  }, []);
+
   const refreshAll = useCallback(async () => {
     setLoadError('');
     try {
-      const [vocabRes, quizRes, resultRes, statusRes] = await Promise.all([
+      const [vocabRes, quizRes, resultRes, statusRes, tStatus] = await Promise.all([
         studyhubApi.getVocab(),
         studyhubApi.getQuizzes(),
         studyhubApi.getResults(),
         studyhubApi.getStatus(),
+        studyhubApi.getTranslationStatus(),
       ]);
       setWords(vocabRes.words);
       setQuizzes(quizRes.quizzes);
       setResults(resultRes.results);
       setFolderStatus(statusRes);
+      setTranslationStatus(tStatus);
     } catch (err) {
       setLoadError(err instanceof Error ? err.message : '加载本地学习数据失败');
     } finally {
@@ -172,55 +200,6 @@ export default function App() {
     [words],
   );
 
-  // 点击英文单词：查词并打开弹窗；若已在单词库中，自动将 lookup_count + 1
-  const handleWordClick = useCallback(
-    async (payload: WordClickPayload) => {
-      setActiveLookup({
-        loading: true,
-        result: null,
-        sentence: payload.sentence,
-        source: payload.source,
-        subject: payload.subject,
-        anchorRect: payload.anchorRect,
-      });
-
-      const result = await studyhubApi.lookup(payload.surface, {
-        glossary: payload.glossary,
-        matchedGlossaryKey: payload.matchedGlossaryKey,
-      });
-
-      setActiveLookup((prev) =>
-        prev
-          ? {
-              ...prev,
-              loading: false,
-              result,
-            }
-          : null,
-      );
-
-      // 若该词已在单词库，重复点词查意思时自动把 lookup_count + 1（不重复加入）
-      const existing = vocabLookupMap.get(normalizeWordKey(result.word));
-      if (existing) {
-        try {
-          const updated = await studyhubApi.addVocab({
-            word: existing.word,
-            meaning_zh: existing.meaning_zh || result.meaning_zh,
-            phonetic: existing.phonetic || result.phonetic,
-            pos: existing.pos || result.pos,
-            context: payload.sentence,
-            source: payload.source,
-            subject: payload.subject,
-          });
-          setWords(updated.vocab.words);
-        } catch {
-          // 忽略后台计数失败，不影响展示
-        }
-      }
-    },
-    [vocabLookupMap],
-  );
-
   const handleAddVocab = useCallback(
     async (payload: {
       word: string;
@@ -236,6 +215,240 @@ export default function App() {
       void studyhubApi.getStatus().then(setFolderStatus);
     },
     [],
+  );
+
+  // 点击英文单词：先查本地词典，按设置自动调用翻译模型接口，并支持自动加入单词库
+  const handleWordClick = useCallback(
+    async (payload: WordClickPayload) => {
+      const seq = ++lookupSeqRef.current;
+      setActiveLookup({
+        loading: true,
+        translatingApi: false,
+        apiError: '',
+        autoSaved: false,
+        result: null,
+        sentence: payload.sentence,
+        source: payload.source,
+        subject: payload.subject,
+        anchorRect: payload.anchorRect,
+      });
+
+      let result = await studyhubApi.lookup(payload.surface, {
+        glossary: payload.glossary,
+        matchedGlossaryKey: payload.matchedGlossaryKey,
+      });
+
+      if (lookupSeqRef.current !== seq) return;
+
+      // 若本地词典未命中但单词库已有释义，优先回显已存释义
+      const existingBeforeApi =
+        vocabLookupMap.get(normalizeWordKey(result.word)) ||
+        vocabLookupMap.get(normalizeWordKey(payload.surface));
+      if (!result.found && existingBeforeApi && existingBeforeApi.meaning_zh.trim()) {
+        result = {
+          ...result,
+          word: existingBeforeApi.word,
+          phonetic: existingBeforeApi.phonetic || result.phonetic,
+          pos: existingBeforeApi.pos || result.pos,
+          meaning_zh: existingBeforeApi.meaning_zh,
+          found: true,
+        };
+      }
+
+      const apiConfigured = Boolean(translationStatus?.configured);
+      const shouldCallApi =
+        apiConfigured &&
+        ((preferences.translationMode === 'always_api' && result.source !== 'glossary') ||
+          (preferences.translationMode === 'auto_fallback' && !result.found));
+
+      setActiveLookup((prev) =>
+        prev
+          ? {
+              ...prev,
+              loading: false,
+              translatingApi: shouldCallApi,
+              result,
+            }
+          : null,
+      );
+
+      let finalResult = result;
+      let autoSaved = false;
+
+      if (shouldCallApi) {
+        try {
+          const apiResult = await studyhubApi.translateWord({
+            surface: payload.matchedGlossaryKey || payload.surface,
+            sentence: payload.sentence,
+            subject: payload.subject,
+          });
+          if (lookupSeqRef.current !== seq) return;
+          finalResult = apiResult;
+
+          const alreadyInVocab = vocabLookupMap.get(normalizeWordKey(apiResult.word));
+          if (preferences.autoAddTranslatedVocab && !alreadyInVocab && apiResult.meaning_zh.trim()) {
+            try {
+              const saved = await studyhubApi.addVocab({
+                word: apiResult.word,
+                meaning_zh: apiResult.meaning_zh,
+                phonetic: apiResult.phonetic || '',
+                pos: apiResult.pos || '',
+                context: payload.sentence,
+                source: payload.source,
+                subject: payload.subject,
+              });
+              setWords(saved.vocab.words);
+              void studyhubApi.getStatus().then(setFolderStatus);
+              autoSaved = true;
+            } catch {
+              // 自动入库失败时仍保留翻译展示，允许用户手动点击加入
+            }
+          }
+
+          if (lookupSeqRef.current !== seq) return;
+          setActiveLookup((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  translatingApi: false,
+                  apiError: '',
+                  autoSaved,
+                  result: apiResult,
+                }
+              : null,
+          );
+        } catch (err) {
+          if (lookupSeqRef.current !== seq) return;
+          setActiveLookup((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  translatingApi: false,
+                  apiError: err instanceof Error ? err.message : '调用翻译接口失败',
+                }
+              : null,
+          );
+        }
+      }
+
+      // 若该词已在单词库，重复点词查意思时自动把 lookup_count + 1（不重复加入）
+      const existing = vocabLookupMap.get(normalizeWordKey(finalResult.word));
+      if (existing && !autoSaved) {
+        try {
+          const updated = await studyhubApi.addVocab({
+            word: existing.word,
+            meaning_zh: existing.meaning_zh || finalResult.meaning_zh,
+            phonetic: existing.phonetic || finalResult.phonetic,
+            pos: existing.pos || finalResult.pos,
+            context: payload.sentence,
+            source: payload.source,
+            subject: payload.subject,
+          });
+          setWords(updated.vocab.words);
+        } catch {
+          // 忽略后台计数失败，不影响展示
+        }
+      }
+    },
+    [
+      vocabLookupMap,
+      translationStatus?.configured,
+      preferences.translationMode,
+      preferences.autoAddTranslatedVocab,
+    ],
+  );
+
+  // 在点词弹窗中手动触发「模型翻译」或「重译」
+  const handleRequestApiTranslate = useCallback(async () => {
+    if (!activeLookup?.result) return;
+    const seq = lookupSeqRef.current;
+    const targetSurface = activeLookup.result.surface || activeLookup.result.word;
+    setActiveLookup((prev) =>
+      prev ? { ...prev, translatingApi: true, apiError: '', autoSaved: false } : null,
+    );
+    try {
+      const apiResult = await studyhubApi.translateWord({
+        surface: targetSurface,
+        sentence: activeLookup.sentence,
+        subject: activeLookup.subject,
+      });
+      if (lookupSeqRef.current !== seq) return;
+
+      let autoSaved = false;
+      const alreadyInVocab = vocabLookupMap.get(normalizeWordKey(apiResult.word));
+      if (preferences.autoAddTranslatedVocab && !alreadyInVocab && apiResult.meaning_zh.trim()) {
+        try {
+          const saved = await studyhubApi.addVocab({
+            word: apiResult.word,
+            meaning_zh: apiResult.meaning_zh,
+            phonetic: apiResult.phonetic || '',
+            pos: apiResult.pos || '',
+            context: activeLookup.sentence,
+            source: activeLookup.source,
+            subject: activeLookup.subject,
+          });
+          setWords(saved.vocab.words);
+          void studyhubApi.getStatus().then(setFolderStatus);
+          autoSaved = true;
+        } catch {
+          // 忽略自动入库失败
+        }
+      }
+
+      setActiveLookup((prev) =>
+        prev
+          ? {
+              ...prev,
+              translatingApi: false,
+              apiError: '',
+              autoSaved,
+              result: apiResult,
+            }
+          : null,
+      );
+    } catch (err) {
+      if (lookupSeqRef.current !== seq) return;
+      setActiveLookup((prev) =>
+        prev
+          ? {
+              ...prev,
+              translatingApi: false,
+              apiError: err instanceof Error ? err.message : '调用翻译接口失败',
+            }
+          : null,
+      );
+    }
+  }, [activeLookup, vocabLookupMap, preferences.autoAddTranslatedVocab]);
+
+  // 供单词库快速查词与单条重译复用
+  const handleLookupAndTranslate = useCallback(
+    async (payload: {
+      surface: string;
+      sentence?: string;
+      subject?: string;
+      preferApi?: boolean;
+    }): Promise<LookupResult> => {
+      if (payload.preferApi && translationStatus?.configured) {
+        return studyhubApi.translateWord({
+          surface: payload.surface,
+          sentence: payload.sentence,
+          subject: payload.subject,
+        });
+      }
+      const localRes = await studyhubApi.lookup(payload.surface);
+      if (
+        translationStatus?.configured &&
+        (preferences.translationMode === 'always_api' || !localRes.found)
+      ) {
+        return studyhubApi.translateWord({
+          surface: payload.surface,
+          sentence: payload.sentence,
+          subject: payload.subject,
+        });
+      }
+      return localRes;
+    },
+    [translationStatus?.configured, preferences.translationMode],
   );
 
   const handleUpdateWord = useCallback(
@@ -502,6 +715,11 @@ export default function App() {
             {activeTab === 'vocab' && (
               <VocabView
                 words={words}
+                vocabLookupMap={vocabLookupMap}
+                translationConfigured={Boolean(translationStatus?.configured)}
+                onWordClick={(p) => void handleWordClick(p)}
+                onLookupAndTranslate={handleLookupAndTranslate}
+                onAddVocab={handleAddVocab}
                 onUpdateWord={handleUpdateWord}
                 onDeleteWord={handleDeleteWord}
                 onExportMarkdown={() => studyhubApi.exportMarkdown()}
@@ -522,6 +740,7 @@ export default function App() {
             {activeTab === 'settings' && (
               <SettingsView
                 status={folderStatus}
+                translationStatus={translationStatus}
                 results={results}
                 preferences={preferences}
                 isDesktopClient={studyhubApi.isDesktopClient()}
@@ -548,6 +767,9 @@ export default function App() {
                 onOpenDataDir={() => studyhubApi.openDataDir()}
                 onImportInbox={handleImportInbox}
                 onImportDictCsv={handleImportDictCsv}
+                onSaveTranslationConfig={handleSaveTranslationConfig}
+                onFetchTranslationModels={handleFetchTranslationModels}
+                onTestTranslate={(payload) => studyhubApi.translateWord(payload)}
               />
             )}
           </>
@@ -558,7 +780,12 @@ export default function App() {
       <WordLookupPopover
         lookup={activeLookup}
         existingEntry={existingPopoverEntry}
+        translationConfigured={Boolean(translationStatus?.configured)}
+        onRequestApiTranslate={handleRequestApiTranslate}
         onAddVocab={handleAddVocab}
+        onUpdateExistingMeaning={(id, meaningZh) =>
+          handleUpdateWord(id, { meaning_zh: meaningZh })
+        }
         onClose={() => setActiveLookup(null)}
       />
     </div>

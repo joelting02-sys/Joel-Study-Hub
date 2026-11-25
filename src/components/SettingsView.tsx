@@ -15,25 +15,41 @@ import {
   Database,
   Download,
   ExternalLink,
+  Eye,
+  EyeOff,
   FolderOpen,
   FolderSearch,
   Inbox,
+  Languages,
+  Loader2,
   Moon,
   RefreshCw,
   RotateCw,
+  Search,
+  Sparkles,
   Sun,
   Upload,
 } from 'lucide-react';
 import type {
   AppPreferences,
   AppUpdateState,
+  FetchModelsInput,
+  FetchModelsResult,
   FolderStatus,
   FontScale,
+  LookupResult,
   QuizResultFile,
+  SaveTranslationConfigInput,
+  TranslationApiStatus,
+  TranslationMode,
 } from '../types/studyhub';
+
+const DOUBAO_DEFAULT_BASE_URL = 'https://ark.cn-beijing.volces.com/api/v3';
+const DOUBAO_DEFAULT_MODEL = 'doubao-seed-translation-250915';
 
 interface SettingsViewProps {
   status: FolderStatus | null;
+  translationStatus: TranslationApiStatus | null;
   results: QuizResultFile[];
   preferences: AppPreferences;
   isDesktopClient: boolean;
@@ -48,10 +64,14 @@ interface SettingsViewProps {
   onOpenDataDir: () => Promise<{ ok: boolean; error?: string }>;
   onImportInbox: (filename: string, data: { words: unknown[] }) => Promise<number>;
   onImportDictCsv: (filename: string, content: string) => Promise<void>;
+  onSaveTranslationConfig: (input: SaveTranslationConfigInput) => Promise<TranslationApiStatus>;
+  onFetchTranslationModels: (input: FetchModelsInput) => Promise<FetchModelsResult>;
+  onTestTranslate: (payload: { surface: string; sentence?: string }) => Promise<LookupResult>;
 }
 
 export const SettingsView: React.FC<SettingsViewProps> = ({
   status,
+  translationStatus,
   results,
   preferences,
   isDesktopClient,
@@ -66,6 +86,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   onOpenDataDir,
   onImportInbox,
   onImportDictCsv,
+  onSaveTranslationConfig,
+  onFetchTranslationModels,
+  onTestTranslate,
 }) => {
   const [dirInput, setDirInput] = useState(status?.dataDir || '');
   const [dirMsg, setDirMsg] = useState('');
@@ -76,8 +99,153 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [toolError, setToolError] = useState('');
   const [copiedPrompt, setCopiedPrompt] = useState(false);
 
+  // 翻译模型精简配置（仅 Base URL + API Key + 自动侦测模型选择）
+  const [baseUrlInput, setBaseUrlInput] = useState(translationStatus?.baseUrl || '');
+  const [apiKeyInput, setApiKeyInput] = useState('');
+  const [showApiKey, setShowApiKey] = useState(false);
+  const [modelInput, setModelInput] = useState(translationStatus?.model || '');
+  const [detectedModels, setDetectedModels] = useState<string[]>([]);
+  const [customModelMode, setCustomModelMode] = useState(false);
+  const [detectingModels, setDetectingModels] = useState(false);
+  const [detectNote, setDetectNote] = useState('');
+  const [savingConfig, setSavingConfig] = useState(false);
+  const [configMsg, setConfigMsg] = useState('');
+  const [configError, setConfigError] = useState('');
+
+  const [testingTranslate, setTestingTranslate] = useState(false);
+  const [testResult, setTestResult] = useState<LookupResult | null>(null);
+
   const inboxInputRef = useRef<HTMLInputElement | null>(null);
   const dictInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    if (translationStatus) {
+      setBaseUrlInput((prev) => (prev ? prev : translationStatus.baseUrl || ''));
+      setModelInput((prev) => (prev ? prev : translationStatus.model || ''));
+    }
+  }, [translationStatus]);
+
+  const handleApplyDoubaoPreset = () => {
+    setBaseUrlInput(DOUBAO_DEFAULT_BASE_URL);
+    if (!modelInput.trim()) {
+      setModelInput(DOUBAO_DEFAULT_MODEL);
+    }
+    setConfigError('');
+    setConfigMsg('已填入豆包火山方舟默认地址与翻译模型，粘贴 API Key 后即可侦测或保存。');
+  };
+
+  const handleDetectModels = async () => {
+    setDetectingModels(true);
+    setConfigError('');
+    setConfigMsg('');
+    setDetectNote('');
+    try {
+      const res = await onFetchTranslationModels({
+        baseUrl: baseUrlInput.trim(),
+        apiKey: apiKeyInput.trim() || undefined,
+      });
+      setDetectedModels(res.models);
+      if (res.models.length > 0) {
+        setCustomModelMode(false);
+        setModelInput((prev) => {
+          if (prev.trim()) return prev;
+          const doubaoPreferred = res.models.find((m) =>
+            m.toLowerCase().includes('doubao-seed-translation'),
+          );
+          return doubaoPreferred || res.models[0];
+        });
+      }
+      if (res.note) {
+        setDetectNote(res.note);
+      } else {
+        setDetectNote(`已自动侦测到 ${res.count} 个可用模型，请在下方直接选择。`);
+      }
+    } catch (err) {
+      setConfigError(err instanceof Error ? err.message : '侦测可用模型失败');
+    } finally {
+      setDetectingModels(false);
+    }
+  };
+
+  const handleSaveTranslationConfig = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    setSavingConfig(true);
+    setConfigError('');
+    setConfigMsg('');
+    setTestResult(null);
+    try {
+      const next = await onSaveTranslationConfig({
+        baseUrl: baseUrlInput.trim(),
+        apiKey: apiKeyInput.trim() || undefined,
+        model: modelInput.trim(),
+      });
+      setBaseUrlInput(next.baseUrl);
+      setModelInput(next.model);
+      setApiKeyInput('');
+      setConfigMsg(
+        next.configured
+          ? `配置已保存（${next.endpointHost} · ${next.model}）`
+          : '配置已保存，请补全 Base URL 与模型名称以启用接口。',
+      );
+      return next;
+    } catch (err) {
+      setConfigError(err instanceof Error ? err.message : '保存翻译配置失败');
+      return null;
+    } finally {
+      setSavingConfig(false);
+    }
+  };
+
+  const handleClearApiKey = async () => {
+    setSavingConfig(true);
+    setConfigError('');
+    setConfigMsg('');
+    try {
+      await onSaveTranslationConfig({
+        baseUrl: baseUrlInput.trim(),
+        model: modelInput.trim(),
+        clearApiKey: true,
+      });
+      setApiKeyInput('');
+      setConfigMsg('已清除已保存的 API Key。');
+    } catch (err) {
+      setConfigError(err instanceof Error ? err.message : '清除 API Key 失败');
+    } finally {
+      setSavingConfig(false);
+    }
+  };
+
+  const handleQuickTestTranslate = async () => {
+    setTestingTranslate(true);
+    setTestResult(null);
+    setConfigError('');
+    try {
+      // 如果表单里有未保存改动，先保存再测试，避免测到旧配置
+      const hasPendingChanges =
+        baseUrlInput.trim() !== (translationStatus?.baseUrl || '') ||
+        modelInput.trim() !== (translationStatus?.model || '') ||
+        apiKeyInput.trim().length > 0;
+      if (hasPendingChanges) {
+        const saved = await onSaveTranslationConfig({
+          baseUrl: baseUrlInput.trim(),
+          apiKey: apiKeyInput.trim() || undefined,
+          model: modelInput.trim(),
+        });
+        setBaseUrlInput(saved.baseUrl);
+        setModelInput(saved.model);
+        setApiKeyInput('');
+      }
+      const res = await onTestTranslate({
+        surface: 'amortization',
+        sentence: 'The company spreads intangible asset costs through annual amortization.',
+      });
+      setTestResult(res);
+    } catch (err) {
+      setConfigError(err instanceof Error ? err.message : '测试翻译失败');
+    } finally {
+      setTestingTranslate(false);
+    }
+  };
 
   const handleCopyAgentPrompt = async () => {
     const activeDir = status?.dataDir || status?.defaultWindowsDir || 'C:\\Users\\joelt\\Documents\\StudyHub';
@@ -342,6 +510,326 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 {label}
               </button>
             ))}
+          </div>
+        </div>
+      </section>
+
+      {/* 翻译模型设置（精简：Base URL + API Key + 自动侦测模型） */}
+      <section
+        data-testid="settings-translation-api-section"
+        className="space-y-5 rounded-xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-[#131C31]"
+      >
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <Languages className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+            <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">
+              翻译模型接口
+            </h2>
+          </div>
+
+          <span
+            className={`text-xs font-semibold ${
+              translationStatus?.configured
+                ? 'text-emerald-700 dark:text-emerald-400'
+                : 'text-slate-500 dark:text-slate-400'
+            }`}
+          >
+            {translationStatus?.configured
+              ? `已连接 · ${translationStatus.endpointHost} · ${translationStatus.model}`
+              : '未配置（仅使用离线词典）'}
+          </span>
+        </div>
+
+        <form onSubmit={(e) => void handleSaveTranslationConfig(e)} className="space-y-4">
+          {/* Base URL */}
+          <div className="space-y-1.5">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <label
+                htmlFor="translate-base-url"
+                className="text-sm font-medium text-slate-800 dark:text-slate-200"
+              >
+                Base URL
+              </label>
+              <button
+                type="button"
+                onClick={handleApplyDoubaoPreset}
+                className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 transition-colors hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
+              >
+                <Sparkles className="h-3.5 w-3.5" />
+                <span>填入豆包默认地址</span>
+              </button>
+            </div>
+            <input
+              id="translate-base-url"
+              type="url"
+              value={baseUrlInput}
+              onChange={(e) => setBaseUrlInput(e.target.value)}
+              placeholder="https://ark.cn-beijing.volces.com/api/v3"
+              className="w-full rounded-lg border border-slate-300 bg-slate-50 px-3.5 py-2 font-mono text-sm text-slate-900 focus:border-blue-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+            />
+          </div>
+
+          {/* API Key */}
+          <div className="space-y-1.5">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <label
+                htmlFor="translate-api-key"
+                className="text-sm font-medium text-slate-800 dark:text-slate-200"
+              >
+                API Key
+              </label>
+              {translationStatus?.hasApiKey && (
+                <div className="flex items-center gap-2 text-xs">
+                  <span className="font-mono text-emerald-700 dark:text-emerald-400">
+                    已保存 ({translationStatus.apiKeyPreview})
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => void handleClearApiKey()}
+                    className="text-slate-500 hover:text-red-600 dark:text-slate-400 dark:hover:text-red-400"
+                  >
+                    清除
+                  </button>
+                </div>
+              )}
+            </div>
+            <div className="relative">
+              <input
+                id="translate-api-key"
+                type={showApiKey ? 'text' : 'password'}
+                autoComplete="off"
+                value={apiKeyInput}
+                onChange={(e) => setApiKeyInput(e.target.value)}
+                placeholder={
+                  translationStatus?.hasApiKey
+                    ? '已安全保存在本地后端，留空保持不变'
+                    : '粘贴你的豆包 / API Key'
+                }
+                className="w-full rounded-lg border border-slate-300 bg-slate-50 py-2 pr-10 pl-3.5 font-mono text-sm text-slate-900 focus:border-blue-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+              />
+              <button
+                type="button"
+                aria-label={showApiKey ? '隐藏密钥' : '显示密钥'}
+                onClick={() => setShowApiKey((v) => !v)}
+                className="absolute top-1/2 right-2.5 -translate-y-1/2 rounded p-1 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
+              >
+                {showApiKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </button>
+            </div>
+          </div>
+
+          {/* 选择模型（支持一键侦测该 API 下的所有模型） */}
+          <div className="space-y-1.5">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <label
+                htmlFor="translate-model-select"
+                className="text-sm font-medium text-slate-800 dark:text-slate-200"
+              >
+                选择模型
+                {detectedModels.length > 0 && (
+                  <span className="ml-2 font-mono text-xs font-normal text-slate-500 dark:text-slate-400">
+                    (已侦测 {detectedModels.length} 个)
+                  </span>
+                )}
+              </label>
+              {detectedModels.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setCustomModelMode((v) => !v)}
+                  className="text-xs font-medium text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200"
+                >
+                  {customModelMode ? '切回下拉列表' : '手动输入模型 ID'}
+                </button>
+              )}
+            </div>
+
+            <div className="flex flex-col gap-2 sm:flex-row">
+              {detectedModels.length > 0 && !customModelMode ? (
+                <select
+                  id="translate-model-select"
+                  value={modelInput}
+                  onChange={(e) => setModelInput(e.target.value)}
+                  className="flex-1 rounded-lg border border-slate-300 bg-slate-50 px-3.5 py-2 font-mono text-sm text-slate-900 focus:border-blue-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                >
+                  {!modelInput && <option value="">请选择一个模型…</option>}
+                  {modelInput && !detectedModels.includes(modelInput) && (
+                    <option value={modelInput}>{modelInput}（当前）</option>
+                  )}
+                  {detectedModels.map((m) => (
+                    <option key={m} value={m}>
+                      {m}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  id="translate-model-select"
+                  type="text"
+                  value={modelInput}
+                  onChange={(e) => setModelInput(e.target.value)}
+                  placeholder="点击右侧「侦测模型」，或直接填 doubao-seed-translation-250915"
+                  className="flex-1 rounded-lg border border-slate-300 bg-slate-50 px-3.5 py-2 font-mono text-sm text-slate-900 focus:border-blue-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                />
+              )}
+
+              <button
+                type="button"
+                disabled={detectingModels || !baseUrlInput.trim()}
+                onClick={() => void handleDetectModels()}
+                className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:opacity-50 whitespace-nowrap dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+              >
+                {detectingModels ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    <span>侦测中…</span>
+                  </>
+                ) : (
+                  <>
+                    <Search className="h-4 w-4" />
+                    <span>侦测模型</span>
+                  </>
+                )}
+              </button>
+            </div>
+
+            {detectNote && (
+              <p className="text-xs leading-relaxed text-blue-700 dark:text-blue-400">
+                {detectNote}
+              </p>
+            )}
+          </div>
+
+          {/* 保存与一键测试 */}
+          <div className="flex flex-wrap items-center gap-2.5 pt-1">
+            <button
+              type="submit"
+              disabled={savingConfig}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-5 py-2 text-sm font-semibold text-white transition-colors hover:bg-blue-700 disabled:opacity-50 whitespace-nowrap dark:bg-blue-500 dark:hover:bg-blue-600"
+            >
+              {savingConfig ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  <span>保存中…</span>
+                </>
+              ) : (
+                <span>保存配置</span>
+              )}
+            </button>
+
+            <button
+              type="button"
+              disabled={testingTranslate || !baseUrlInput.trim() || !modelInput.trim()}
+              onClick={() => void handleQuickTestTranslate()}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:opacity-50 whitespace-nowrap dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+            >
+              {testingTranslate ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  <span>测试翻译中…</span>
+                </>
+              ) : (
+                <span>测试翻译（amortization）</span>
+              )}
+            </button>
+          </div>
+
+          {configMsg && (
+            <p className="text-xs font-medium text-emerald-700 dark:text-emerald-400">
+              {configMsg}
+            </p>
+          )}
+          {configError ? (
+            <p className="text-xs font-medium text-red-600 dark:text-red-400" role="alert">
+              {configError}
+            </p>
+          ) : (
+            !configMsg &&
+            !detectNote &&
+            translationStatus?.error && (
+              <p className="text-xs font-medium text-red-600 dark:text-red-400" role="alert">
+                {translationStatus.error}
+              </p>
+            )
+          )}
+          {testResult && (
+            <div className="rounded-lg border border-emerald-200 bg-emerald-50/70 px-3.5 py-2.5 text-sm text-emerald-900 dark:border-emerald-800/60 dark:bg-emerald-950/40 dark:text-emerald-200">
+              <span className="font-semibold">测试成功：</span>
+              <span className="font-bold">{testResult.word}</span>
+              {testResult.phonetic && (
+                <span className="ml-2 font-mono text-xs">/{testResult.phonetic}/</span>
+              )}
+              {testResult.pos && <span className="ml-2 text-xs">{testResult.pos}</span>}
+              <span className="ml-2">— {testResult.meaning_zh}</span>
+            </div>
+          )}
+        </form>
+
+        {/* 触发策略与自动入库 */}
+        <div className="space-y-4 border-t border-slate-100 pt-4 dark:border-slate-800">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-sm font-medium text-slate-800 dark:text-slate-200">
+                点击单词时的翻译方式
+              </p>
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                在测验、复习和单词库中点词时，自动按所选策略调用你的翻译模型
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-1 rounded-lg bg-slate-100 p-1 w-fit dark:bg-slate-800">
+              {(
+                [
+                  ['auto_fallback', '词典未收录时自动调用'],
+                  ['always_api', '优先用翻译模型'],
+                  ['manual', '仅手动点击'],
+                ] as Array<[TranslationMode, string]>
+              ).map(([mode, label]) => (
+                <button
+                  key={mode}
+                  type="button"
+                  onClick={() => onUpdatePreferences({ translationMode: mode })}
+                  className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors whitespace-nowrap ${
+                    preferences.translationMode === mode
+                      ? 'bg-white text-slate-900 shadow-xs dark:bg-slate-900 dark:text-slate-50'
+                      : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-3 border-t border-slate-100 pt-4 sm:flex-row sm:items-center sm:justify-between dark:border-slate-800">
+            <div>
+              <p className="text-sm font-medium text-slate-800 dark:text-slate-200">
+                翻译成功后自动加入单词库
+              </p>
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                开启后，翻译出中文释义会自动连同原句写入 vocab.json，无需再点一次加入
+              </p>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-label="翻译成功后自动加入单词库"
+              aria-checked={preferences.autoAddTranslatedVocab}
+              onClick={() =>
+                onUpdatePreferences({
+                  autoAddTranslatedVocab: !preferences.autoAddTranslatedVocab,
+                })
+              }
+              className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full transition-colors ${
+                preferences.autoAddTranslatedVocab
+                  ? 'bg-blue-600 dark:bg-blue-500'
+                  : 'bg-slate-300 dark:bg-slate-700'
+              }`}
+            >
+              <span
+                className={`pointer-events-none mt-0.5 inline-block h-5 w-5 rounded-full bg-white shadow-xs transition-transform ${
+                  preferences.autoAddTranslatedVocab ? 'translate-x-5.5' : 'translate-x-0.5'
+                }`}
+              />
+            </button>
           </div>
         </div>
       </section>

@@ -1,14 +1,17 @@
 pub mod dictionary;
 pub mod models;
 pub mod storage;
+pub mod translator;
 pub mod updater;
 pub mod vocab;
 
 use models::{
     ActionResult, AddVocabInput, AddVocabResponse, AppUpdateState, ExportMarkdownResponse,
-    FolderStatus, ImportInboxResponse, ImportQuizResponse, LookupOptionsInput, LookupResult,
-    PickDataDirResponse, QuizFile, QuizResultFile, QuizzesResponse, ResultsResponse,
-    SaveResultResponse, StorageChangeEvent, UpdateVocabPatch, VocabFile, VocabInboxFile,
+    FetchModelsInput, FetchModelsResult, FolderStatus, ImportInboxResponse, ImportQuizResponse,
+    LookupOptionsInput, LookupResult, PickDataDirResponse, QuizFile, QuizResultFile,
+    QuizzesResponse, ResultsResponse, SaveResultResponse, SaveTranslationConfigInput,
+    StorageChangeEvent, TranslateWordInput, TranslationApiStatus, UpdateVocabPatch, VocabFile,
+    VocabInboxFile,
 };
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use std::path::Path;
@@ -421,6 +424,48 @@ fn import_dict_csv(
     Ok(status)
 }
 
+#[tauri::command]
+fn get_translation_status(state: State<'_, AppState>) -> TranslationApiStatus {
+    let guard = state.storage.lock().unwrap();
+    translator::get_translation_status(guard.config_path(), Some(guard.data_dir()))
+}
+
+#[tauri::command]
+fn save_translation_config(
+    state: State<'_, AppState>,
+    input: SaveTranslationConfigInput,
+) -> Result<TranslationApiStatus, String> {
+    let guard = state.storage.lock().unwrap();
+    translator::save_translation_config(guard.config_path(), Some(guard.data_dir()), input)
+}
+
+#[tauri::command]
+async fn fetch_translation_models(
+    app: AppHandle,
+    input: Option<FetchModelsInput>,
+) -> Result<FetchModelsResult, String> {
+    let (config_path, data_dir) = {
+        let state = app.state::<AppState>();
+        let guard = state.storage.lock().unwrap();
+        (guard.config_path().to_path_buf(), guard.data_dir().to_path_buf())
+    };
+    translator::fetch_available_models(&config_path, Some(&data_dir), input.unwrap_or_default())
+        .await
+}
+
+#[tauri::command]
+async fn translate_word_cmd(
+    app: AppHandle,
+    input: TranslateWordInput,
+) -> Result<LookupResult, String> {
+    let (config_path, data_dir) = {
+        let state = app.state::<AppState>();
+        let guard = state.storage.lock().unwrap();
+        (guard.config_path().to_path_buf(), guard.data_dir().to_path_buf())
+    };
+    translator::translate_word_with_api(&config_path, Some(&data_dir), input).await
+}
+
 // ==================== GitHub Releases 零密钥应用内升级 Commands ====================
 
 #[tauri::command]
@@ -516,6 +561,10 @@ pub fn run() {
             save_result,
             lookup_word_cmd,
             import_dict_csv,
+            get_translation_status,
+            save_translation_config,
+            fetch_translation_models,
+            translate_word_cmd,
             get_update_state,
             check_for_updates,
             download_update,

@@ -22,6 +22,8 @@ export interface WordClickPayload {
 
 interface InteractiveTextProps {
   text: string;
+  /** 所在整句/整段的完整纯文本（用于 Markdown 加粗/斜体内部点词时仍能提取完整原句） */
+  contextText?: string;
   glossary?: Record<string, string>;
   source: string;
   subject: string;
@@ -32,6 +34,7 @@ interface InteractiveTextProps {
 
 export const InteractiveText: React.FC<InteractiveTextProps> = ({
   text,
+  contextText,
   glossary,
   source,
   subject,
@@ -51,7 +54,14 @@ export const InteractiveText: React.FC<InteractiveTextProps> = ({
     e.stopPropagation();
     e.preventDefault();
     const rect = e.currentTarget.getBoundingClientRect();
-    const sentence = extractSentenceAt(text, start);
+    let sentence: string;
+    if (contextText && contextText.length >= text.length) {
+      const fragmentPos = contextText.indexOf(text);
+      const absoluteIdx = fragmentPos >= 0 ? fragmentPos + start : Math.max(0, contextText.indexOf(surface));
+      sentence = extractSentenceAt(contextText, Math.max(0, absoluteIdx));
+    } else {
+      sentence = extractSentenceAt(text, start);
+    }
     onWordClick({
       surface,
       matchedGlossaryKey: glossaryKey,
