@@ -1,7 +1,7 @@
 {
   "name": "studyhub",
   "private": true,
-  "version": "1.0.6",
+  "version": "1.0.7",
   "description": "StudyHub — 个人英语与专业课本地桌面学习客户端（Tauri v2 + Rust）",
   "type": "module",
   "scripts": {

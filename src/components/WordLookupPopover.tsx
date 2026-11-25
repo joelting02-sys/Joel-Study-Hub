@@ -10,6 +10,7 @@ import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Check, Languages, Loader2, Plus, RefreshCw, X } from 'lucide-react';
 import type { LookupResult, VocabEntry } from '../types/studyhub';
 import { extractErrorMessage } from '../lib/errors';
+import { isDedicatedTranslationModel } from '../lib/lookupHelpers';
 
 export interface ActiveLookupState {
   loading: boolean;
@@ -29,7 +30,9 @@ interface WordLookupPopoverProps {
   lookup: ActiveLookupState | null;
   existingEntry: VocabEntry | null;
   translationConfigured: boolean;
+  translationModel?: string;
   onRequestApiTranslate: () => Promise<void>;
+  onSelectSynonym?: (word: string) => void;
   onAddVocab: (payload: {
     word: string;
     meaning_zh: string;
@@ -57,7 +60,9 @@ export const WordLookupPopover: React.FC<WordLookupPopoverProps> = ({
   lookup,
   existingEntry,
   translationConfigured,
+  translationModel = '',
   onRequestApiTranslate,
+  onSelectSynonym,
   onAddVocab,
   onUpdateExistingMeaning,
   onClose,
@@ -265,9 +270,72 @@ export const WordLookupPopover: React.FC<WordLookupPopoverProps> = ({
               <span>正在调用翻译模型接口…</span>
             </div>
           ) : result.found ? (
-            <p className="text-base leading-relaxed font-medium text-slate-800 dark:text-slate-100">
-              {result.meaning_zh}
-            </p>
+            <div className="space-y-2.5">
+              <p className="text-base leading-relaxed font-medium text-slate-800 dark:text-slate-100">
+                {result.meaning_zh}
+              </p>
+
+              {result.glossaryNote && (
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  本测验术语：{result.glossaryNote}
+                </p>
+              )}
+
+              {result.plain_zh && (
+                <div className="rounded-lg border border-blue-100 bg-blue-50/70 px-2.5 py-2 text-xs leading-relaxed text-slate-700 dark:border-blue-900/50 dark:bg-blue-950/30 dark:text-slate-200">
+                  <span className="font-semibold text-blue-700 dark:text-blue-300">通俗说法：</span>
+                  <span>{result.plain_zh}</span>
+                </div>
+              )}
+
+              {result.alternatives && result.alternatives.length > 0 && (
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="text-[11px] font-medium text-slate-500 dark:text-slate-400">
+                    不同说法：
+                  </span>
+                  {result.alternatives.map((alt, i) => (
+                    <span
+                      key={i}
+                      className="rounded-md bg-slate-100 px-2 py-0.5 text-xs text-slate-700 dark:bg-slate-800 dark:text-slate-200"
+                    >
+                      {alt}
+                    </span>
+                  ))}
+                </div>
+              )}
+
+              {result.synonyms && result.synonyms.length > 0 && (
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="text-[11px] font-medium text-slate-500 dark:text-slate-400">
+                    英文同义词：
+                  </span>
+                  {result.synonyms.map((syn, i) => (
+                    <button
+                      key={i}
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onSelectSynonym?.(syn);
+                      }}
+                      title={`点击查询 ${syn}`}
+                      className="rounded-md border border-slate-200 bg-white px-2 py-0.5 font-mono text-xs text-blue-700 transition-colors hover:border-blue-300 hover:bg-blue-50 dark:border-slate-700 dark:bg-slate-900 dark:text-blue-300 dark:hover:border-blue-600 dark:hover:bg-blue-950/40"
+                    >
+                      {syn}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {result.source === 'api' &&
+                isDedicatedTranslationModel(translationModel) &&
+                !result.plain_zh &&
+                (!result.alternatives || result.alternatives.length === 0) &&
+                (!result.synonyms || result.synonyms.length === 0) && (
+                  <p className="text-[11px] leading-relaxed text-amber-700 dark:text-amber-400">
+                    当前为纯直译模型（只出单一译文）；在设置改选通用对话模型可自动展示通俗说法与同义词。
+                  </p>
+                )}
+            </div>
           ) : (
             <div className="space-y-2">
               <p className="text-xs leading-relaxed text-slate-500 dark:text-slate-400">
@@ -354,7 +422,7 @@ export const WordLookupPopover: React.FC<WordLookupPopoverProps> = ({
                 ) : (
                   <>
                     <Languages className="h-3.5 w-3.5 text-blue-600 dark:text-blue-400" />
-                    <span>模型翻译</span>
+                    <span>AI 更多意思 / 同义</span>
                   </>
                 )}
               </button>

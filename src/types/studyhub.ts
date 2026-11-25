@@ -104,6 +104,14 @@ export interface LookupResult {
   phonetic: string;
   pos: string;
   meaning_zh: string;
+  /** 更直观的大白话 / 通俗中文解释 */
+  plain_zh?: string;
+  /** 其他常见中文说法 / 近义译法 */
+  alternatives?: string[];
+  /** 常见英文同义词或相近表达 */
+  synonyms?: string[];
+  /** 若调用了 AI 模型扩展释义，同时保留原测验 glossary 术语参考 */
+  glossaryNote?: string;
   source: LookupSource;
   /** 词形还原说明，如 "went → go" */
   lemmaNote?: string;

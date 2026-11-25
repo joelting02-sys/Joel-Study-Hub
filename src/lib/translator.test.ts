@@ -318,3 +318,30 @@ test('translateWordWithApi routes doubao-seed-translation to /responses and gene
     fs.rmSync(path.dirname(cfgPath), { recursive: true, force: true });
   }
 });
+
+test('parseModelTranslationPayload extracts plain_zh, alternatives, and synonyms cleanly', () => {
+  const rich = parseModelTranslationPayload(
+    {
+      choices: [
+        {
+          message: {
+            content: JSON.stringify({
+              word: 'stakeholder',
+              phonetic: 'ˈsteɪkhəʊldə(r)',
+              pos: 'n.',
+              meaning_zh: '利益相关者；干系人',
+              plain_zh: '跟公司或项目有利害关系的人（比如股东、员工、客户）',
+              alternatives: ['股东', '利益方', '利益相关者；干系人'],
+              synonyms: ['shareholder', 'interested party', 'stakeholders'],
+            }),
+          },
+        },
+      ],
+    },
+    'stakeholders',
+  );
+  assert.equal(rich.word, 'stakeholder');
+  assert.equal(rich.plain_zh, '跟公司或项目有利害关系的人（比如股东、员工、客户）');
+  assert.deepEqual(rich.alternatives, ['股东', '利益方']);
+  assert.deepEqual(rich.synonyms, ['shareholder', 'interested party']);
+});

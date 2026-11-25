@@ -92,3 +92,15 @@ test('extractSentenceAt returns the containing sentence', () => {
     'A hybrid cloud combines private and public infrastructure.',
   );
 });
+
+test('lookupWord enriches glossary match with ECDICT phonetic and alternative meanings', () => {
+  const res = lookupWord('stakeholder', {
+    glossary: { stakeholder: '利益相关者' },
+    matchedGlossaryKey: 'stakeholder',
+  });
+  assert.equal(res.found, true);
+  assert.equal(res.source, 'glossary');
+  assert.equal(res.meaning_zh, '利益相关者');
+  assert.ok(res.phonetic.length > 0);
+  assert.ok(res.alternatives && res.alternatives.includes('股东'));
+});

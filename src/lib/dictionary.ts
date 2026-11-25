@@ -55,10 +55,10 @@ export interface DictionaryIndex {
 }
 
 /**
- * 将 ECDICT 多行中文释义精简为最多 3 个简短义项
+ * 将 ECDICT 多行中文释义拆分为去重后的独立义项列表
  */
-export function condenseMeaningZh(rawTranslation: string, maxSenses = 3): string {
-  if (!rawTranslation) return '';
+export function splitMeaningSenses(rawTranslation: string): string[] {
+  if (!rawTranslation) return [];
   const cleaned = rawTranslation
     .replace(/\\n/g, '\n')
     .split(/\n/)
@@ -71,15 +71,20 @@ export function condenseMeaningZh(rawTranslation: string, maxSenses = 3): string
     .map((p) => p.trim())
     .filter(Boolean);
 
-  // 去重并保留前 maxSenses 个义项
   const unique: string[] = [];
   for (const p of parts) {
     if (!unique.includes(p)) {
       unique.push(p);
     }
-    if (unique.length >= maxSenses) break;
   }
-  return unique.join('；');
+  return unique;
+}
+
+/**
+ * 将 ECDICT 多行中文释义精简为最多 maxSenses 个简短义项
+ */
+export function condenseMeaningZh(rawTranslation: string, maxSenses = 3): string {
+  return splitMeaningSenses(rawTranslation).slice(0, maxSenses).join('；');
 }
 
 /**
@@ -172,6 +177,87 @@ export interface LookupOptions {
   dictIndex?: DictionaryIndex;
 }
 
+function findEcdictRecord(
+  cleanedSurface: string,
+  dictIndex: DictionaryIndex,
+): { rec: EcdictRecord; lemmaNote?: string } | null {
+  const lower = cleanedSurface.toLowerCase();
+  if (!lower) return null;
+
+  const mappedLemma = dictIndex.inflectionToLemma.get(lower);
+  if (mappedLemma && mappedLemma !== lower) {
+    const lemmaRec = dictIndex.byWord.get(mappedLemma);
+    if (lemmaRec) {
+      return { rec: lemmaRec, lemmaNote: `${cleanedSurface} → ${lemmaRec.word}` };
+    }
+  }
+
+  const directRec = dictIndex.byWord.get(lower);
+  if (directRec) {
+    return { rec: directRec };
+  }
+
+  for (const cand of ruleBasedLemmaCandidates(lower)) {
+    const candRec = dictIndex.byWord.get(cand);
+    if (candRec) {
+      return { rec: candRec, lemmaNote: `${cleanedSurface} → ${candRec.word}` };
+    }
+  }
+
+  return null;
+}
+
+function buildGlossaryLookupResult(
+  matchedKey: string,
+  rawSurface: string,
+  cleanedSurface: string,
+  glossaryMeaning: string,
+  dictIndex: DictionaryIndex,
+): LookupResult {
+  const lookupToken = cleanedSurface || matchedKey.trim();
+  const ecdictHit = !lookupToken.includes(' ') ? findEcdictRecord(lookupToken, dictIndex) : null;
+  const primaryParts = new Set(
+    splitMeaningSenses(glossaryMeaning).map((s) => s.trim()).filter(Boolean),
+  );
+  const alternatives = ecdictHit
+    ? splitMeaningSenses(ecdictHit.rec.translation)
+        .filter((s) => s !== glossaryMeaning.trim() && !primaryParts.has(s))
+        .slice(0, 5)
+    : [];
+
+  return {
+    word: matchedKey,
+    surface: rawSurface.trim(),
+    phonetic: ecdictHit?.rec.phonetic || '',
+    pos: '术语',
+    meaning_zh: glossaryMeaning,
+    ...(alternatives.length > 0 ? { alternatives } : {}),
+    source: 'glossary',
+    found: true,
+  };
+}
+
+function buildEcdictLookupResult(
+  rec: EcdictRecord,
+  cleanedSurface: string,
+  lemmaNote?: string,
+): LookupResult {
+  const allSenses = splitMeaningSenses(rec.translation);
+  const meaningZh = allSenses.slice(0, 3).join('；');
+  const alternatives = allSenses.slice(3, 7);
+  return {
+    word: rec.word,
+    surface: cleanedSurface,
+    phonetic: rec.phonetic,
+    pos: rec.pos,
+    meaning_zh: meaningZh,
+    ...(alternatives.length > 0 ? { alternatives } : {}),
+    source: 'ecdict',
+    ...(lemmaNote ? { lemmaNote } : {}),
+    found: true,
+  };
+}
+
 /**
  * 执行点词翻译（严格遵守 4 级优先级）
  */
@@ -179,33 +265,29 @@ export function lookupWord(rawSurface: string, options: LookupOptions = {}): Loo
   const { glossary, matchedGlossaryKey, dictIndex = DEFAULT_INDEX } = options;
   const cleanedSurface = cleanToken(rawSurface);
 
-  // 1. 优先匹配当前测验 glossary（整组匹配优先）
+  // 1. 优先匹配当前测验 glossary（整组匹配优先，并从离线词典补充音标与其他说法）
   if (glossary) {
     if (matchedGlossaryKey && glossary[matchedGlossaryKey] !== undefined) {
-      return {
-        word: matchedGlossaryKey,
-        surface: rawSurface.trim(),
-        phonetic: '',
-        pos: '术语',
-        meaning_zh: glossary[matchedGlossaryKey],
-        source: 'glossary',
-        found: true,
-      };
+      return buildGlossaryLookupResult(
+        matchedGlossaryKey,
+        rawSurface,
+        cleanedSurface,
+        glossary[matchedGlossaryKey],
+        dictIndex,
+      );
     }
     const targetLower = cleanedSurface.toLowerCase();
     // 尝试直接匹配单/多词 glossary 键（按长度降序）
     const keys = Object.keys(glossary).sort((a, b) => b.length - a.length);
     for (const key of keys) {
       if (key.trim().toLowerCase() === targetLower || key.trim().toLowerCase() === rawSurface.trim().toLowerCase()) {
-        return {
-          word: key,
-          surface: rawSurface.trim(),
-          phonetic: '',
-          pos: '术语',
-          meaning_zh: glossary[key],
-          source: 'glossary',
-          found: true,
-        };
+        return buildGlossaryLookupResult(
+          key,
+          rawSurface,
+          cleanedSurface,
+          glossary[key],
+          dictIndex,
+        );
       }
     }
   }
@@ -225,56 +307,10 @@ export function lookupWord(rawSurface: string, options: LookupOptions = {}): Loo
   }
 
   // 3. 离线词典 ECDICT + exchange 词形还原
-  const lower = cleanedSurface.toLowerCase();
-  if (lower) {
-    // 3a. 先查是否有直接的 exchange 变形映射（例如 went -> go, plans -> plan, competitors -> competitor）
-    const mappedLemma = dictIndex.inflectionToLemma.get(lower);
-    if (mappedLemma && mappedLemma !== lower) {
-      const lemmaRec = dictIndex.byWord.get(mappedLemma);
-      if (lemmaRec) {
-        return {
-          word: lemmaRec.word,
-          surface: cleanedSurface,
-          phonetic: lemmaRec.phonetic,
-          pos: lemmaRec.pos,
-          meaning_zh: condenseMeaningZh(lemmaRec.translation, 3),
-          source: 'ecdict',
-          lemmaNote: `${cleanedSurface} → ${lemmaRec.word}`,
-          found: true,
-        };
-      }
-    }
-
-    // 3b. 直接命中原词
-    const directRec = dictIndex.byWord.get(lower);
-    if (directRec) {
-      // 如果 ECDICT 记录本身通过 exchange 0:xxx 指向原形，且本身没有独立释义，则跳转到原形
-      return {
-        word: directRec.word,
-        surface: cleanedSurface,
-        phonetic: directRec.phonetic,
-        pos: directRec.pos,
-        meaning_zh: condenseMeaningZh(directRec.translation, 3),
-        source: 'ecdict',
-        found: true,
-      };
-    }
-
-    // 3c. 规则词尾还原兜底（例如外置 CSV 未包含 exchange）
-    for (const cand of ruleBasedLemmaCandidates(lower)) {
-      const candRec = dictIndex.byWord.get(cand);
-      if (candRec) {
-        return {
-          word: candRec.word,
-          surface: cleanedSurface,
-          phonetic: candRec.phonetic,
-          pos: candRec.pos,
-          meaning_zh: condenseMeaningZh(candRec.translation, 3),
-          source: 'ecdict',
-          lemmaNote: `${cleanedSurface} → ${candRec.word}`,
-          found: true,
-        };
-      }
+  if (cleanedSurface) {
+    const hit = findEcdictRecord(cleanedSurface, dictIndex);
+    if (hit) {
+      return buildEcdictLookupResult(hit.rec, cleanedSurface, hit.lemmaNote);
     }
   }
 

@@ -95,10 +95,10 @@ pub fn clean_token(raw: &str) -> String {
         .to_string()
 }
 
-/// 将 ECDICT 多行中文释义精简为最多 max_senses 个简短义项
-pub fn condense_meaning_zh(raw_translation: &str, max_senses: usize) -> String {
+/// 将 ECDICT 多行中文释义拆分为去重后的独立义项列表
+pub fn split_meaning_senses(raw_translation: &str) -> Vec<String> {
     if raw_translation.is_empty() {
-        return String::new();
+        return Vec::new();
     }
 
     let normalized = raw_translation.replace("\\n", "\n");
@@ -126,11 +126,17 @@ pub fn condense_meaning_zh(raw_translation: &str, max_senses: usize) -> String {
         if !unique.iter().any(|existing| existing == p) {
             unique.push(p.to_string());
         }
-        if unique.len() >= max_senses {
-            break;
-        }
     }
-    unique.join("；")
+    unique
+}
+
+/// 将 ECDICT 多行中文释义精简为最多 max_senses 个简短义项
+pub fn condense_meaning_zh(raw_translation: &str, max_senses: usize) -> String {
+    split_meaning_senses(raw_translation)
+        .into_iter()
+        .take(max_senses)
+        .collect::<Vec<_>>()
+        .join("；")
 }
 
 fn strip_leading_pos(line: &str) -> &str {
@@ -222,6 +228,101 @@ fn rule_based_lemma_candidates(lower: &str) -> Vec<String> {
     candidates
 }
 
+fn find_ecdict_record<'a>(
+    cleaned_surface: &str,
+    index: &'a DictionaryIndex,
+) -> Option<(&'a EcdictRecord, Option<String>)> {
+    let lower = cleaned_surface.to_lowercase();
+    if lower.is_empty() {
+        return None;
+    }
+
+    if let Some(mapped_lemma) = index.inflection_to_lemma.get(&lower) {
+        if mapped_lemma != &lower {
+            if let Some(lemma_rec) = index.by_word.get(mapped_lemma) {
+                return Some((lemma_rec, Some(format!("{} → {}", cleaned_surface, lemma_rec.word))));
+            }
+        }
+    }
+
+    if let Some(direct_rec) = index.by_word.get(&lower) {
+        return Some((direct_rec, None));
+    }
+
+    for cand in rule_based_lemma_candidates(&lower) {
+        if let Some(cand_rec) = index.by_word.get(&cand) {
+            return Some((cand_rec, Some(format!("{} → {}", cleaned_surface, cand_rec.word))));
+        }
+    }
+
+    None
+}
+
+fn build_glossary_result(
+    matched_key: &str,
+    raw_trimmed: &str,
+    cleaned_surface: &str,
+    glossary_meaning: &str,
+    index: &DictionaryIndex,
+) -> LookupResult {
+    let lookup_token = if cleaned_surface.is_empty() {
+        matched_key.trim()
+    } else {
+        cleaned_surface
+    };
+    let ecdict_hit = if !lookup_token.contains(' ') {
+        find_ecdict_record(lookup_token, index)
+    } else {
+        None
+    };
+
+    let primary_parts = split_meaning_senses(glossary_meaning);
+    let glossary_trimmed = glossary_meaning.trim();
+    let alternatives = if let Some((rec, _)) = ecdict_hit {
+        split_meaning_senses(&rec.translation)
+            .into_iter()
+            .filter(|s| s != glossary_trimmed && !primary_parts.iter().any(|p| p == s))
+            .take(5)
+            .collect()
+    } else {
+        Vec::new()
+    };
+
+    LookupResult {
+        word: matched_key.to_string(),
+        surface: raw_trimmed.to_string(),
+        phonetic: ecdict_hit.map(|(r, _)| r.phonetic.clone()).unwrap_or_default(),
+        pos: "术语".to_string(),
+        meaning_zh: glossary_meaning.to_string(),
+        alternatives,
+        source: "glossary".to_string(),
+        found: true,
+        ..Default::default()
+    }
+}
+
+fn build_ecdict_result(
+    rec: &EcdictRecord,
+    cleaned_surface: &str,
+    lemma_note: Option<String>,
+) -> LookupResult {
+    let all_senses = split_meaning_senses(&rec.translation);
+    let meaning_zh = all_senses.iter().take(3).cloned().collect::<Vec<_>>().join("；");
+    let alternatives = all_senses.into_iter().skip(3).take(4).collect();
+    LookupResult {
+        word: rec.word.clone(),
+        surface: cleaned_surface.to_string(),
+        phonetic: rec.phonetic.clone(),
+        pos: rec.pos.clone(),
+        meaning_zh,
+        alternatives,
+        source: "ecdict".to_string(),
+        lemma_note,
+        found: true,
+        ..Default::default()
+    }
+}
+
 /// 严格按 4 级优先级执行点词查义（与 TypeScript lookupWord 100% 行为一致）
 pub fn lookup_word(
     raw_surface: &str,
@@ -231,20 +332,11 @@ pub fn lookup_word(
     let cleaned_surface = clean_token(raw_surface);
     let raw_trimmed = raw_surface.trim();
 
-    // 1. 优先匹配当前测验 glossary（整组最长匹配优先）
+    // 1. 优先匹配当前测验 glossary（整组最长匹配优先，并从离线词典补充音标与其他说法）
     if let Some(glossary) = &options.glossary {
         if let Some(matched_key) = &options.matched_glossary_key {
             if let Some(val) = glossary.get(matched_key) {
-                return LookupResult {
-                    word: matched_key.clone(),
-                    surface: raw_trimmed.to_string(),
-                    phonetic: String::new(),
-                    pos: "术语".to_string(),
-                    meaning_zh: val.clone(),
-                    source: "glossary".to_string(),
-                    lemma_note: None,
-                    found: true,
-                };
+                return build_glossary_result(matched_key, raw_trimmed, &cleaned_surface, val, index);
             }
         }
 
@@ -256,16 +348,7 @@ pub fn lookup_word(
             let key_lower = key.trim().to_lowercase();
             if key_lower == target_lower || key_lower == raw_lower {
                 if let Some(val) = glossary.get(key) {
-                    return LookupResult {
-                        word: key.clone(),
-                        surface: raw_trimmed.to_string(),
-                        phonetic: String::new(),
-                        pos: "术语".to_string(),
-                        meaning_zh: val.clone(),
-                        source: "glossary".to_string(),
-                        lemma_note: None,
-                        found: true,
-                    };
+                    return build_glossary_result(key, raw_trimmed, &cleaned_surface, val, index);
                 }
             }
         }
@@ -277,62 +360,19 @@ pub fn lookup_word(
             return LookupResult {
                 word: word.to_string(),
                 surface: cleaned_surface,
-                phonetic: String::new(),
                 pos: pos.to_string(),
                 meaning_zh: meaning.to_string(),
                 source: "acronym".to_string(),
-                lemma_note: None,
                 found: true,
+                ..Default::default()
             };
         }
     }
 
     // 3. 离线词典 ECDICT + exchange 词形还原
-    let lower = cleaned_surface.to_lowercase();
-    if !lower.is_empty() {
-        if let Some(mapped_lemma) = index.inflection_to_lemma.get(&lower) {
-            if mapped_lemma != &lower {
-                if let Some(lemma_rec) = index.by_word.get(mapped_lemma) {
-                    return LookupResult {
-                        word: lemma_rec.word.clone(),
-                        surface: cleaned_surface.clone(),
-                        phonetic: lemma_rec.phonetic.clone(),
-                        pos: lemma_rec.pos.clone(),
-                        meaning_zh: condense_meaning_zh(&lemma_rec.translation, 3),
-                        source: "ecdict".to_string(),
-                        lemma_note: Some(format!("{} → {}", cleaned_surface, lemma_rec.word)),
-                        found: true,
-                    };
-                }
-            }
-        }
-
-        if let Some(direct_rec) = index.by_word.get(&lower) {
-            return LookupResult {
-                word: direct_rec.word.clone(),
-                surface: cleaned_surface,
-                phonetic: direct_rec.phonetic.clone(),
-                pos: direct_rec.pos.clone(),
-                meaning_zh: condense_meaning_zh(&direct_rec.translation, 3),
-                source: "ecdict".to_string(),
-                lemma_note: None,
-                found: true,
-            };
-        }
-
-        for cand in rule_based_lemma_candidates(&lower) {
-            if let Some(cand_rec) = index.by_word.get(&cand) {
-                return LookupResult {
-                    word: cand_rec.word.clone(),
-                    surface: cleaned_surface.clone(),
-                    phonetic: cand_rec.phonetic.clone(),
-                    pos: cand_rec.pos.clone(),
-                    meaning_zh: condense_meaning_zh(&cand_rec.translation, 3),
-                    source: "ecdict".to_string(),
-                    lemma_note: Some(format!("{} → {}", cleaned_surface, cand_rec.word)),
-                    found: true,
-                };
-            }
+    if !cleaned_surface.is_empty() {
+        if let Some((rec, lemma_note)) = find_ecdict_record(&cleaned_surface, index) {
+            return build_ecdict_result(rec, &cleaned_surface, lemma_note);
         }
     }
 
@@ -345,12 +385,9 @@ pub fn lookup_word(
     LookupResult {
         word: fallback_word.clone(),
         surface: fallback_word,
-        phonetic: String::new(),
-        pos: String::new(),
-        meaning_zh: String::new(),
         source: "not_found".to_string(),
-        lemma_note: None,
         found: false,
+        ..Default::default()
     }
 }
 
@@ -394,5 +431,25 @@ mod tests {
     fn condense_limits_to_three_senses() {
         let condensed = condense_meaning_zh("n. 计划；方案；设计\\nv. 打算；规划", 3);
         assert_eq!(condensed, "计划；方案；设计");
+    }
+
+    #[test]
+    fn glossary_match_keeps_ecdict_alternatives_and_phonetic() {
+        let index = build_dictionary_index(load_builtin_records());
+        let mut glossary = HashMap::new();
+        glossary.insert("stakeholder".to_string(), "利益相关者".to_string());
+
+        let res = lookup_word(
+            "stakeholder",
+            &LookupOptionsInput {
+                glossary: Some(glossary),
+                matched_glossary_key: Some("stakeholder".to_string()),
+            },
+            &index,
+        );
+        assert_eq!(res.source, "glossary");
+        assert_eq!(res.meaning_zh, "利益相关者");
+        assert!(!res.phonetic.is_empty());
+        assert!(res.alternatives.iter().any(|s| s == "股东"));
     }
 }

@@ -33,6 +33,7 @@ import type {
 import { studyhubApi } from './api/studyhubApi';
 import { extractErrorMessage } from './lib/errors';
 import { formatDateYmd, getDueReviewWords, normalizeWordKey } from './lib/vocabLogic';
+import { mergeLookupEnrichment } from './lib/lookupHelpers';
 import {
   WordLookupBehaviorContext,
   type WordClickPayload,
@@ -295,7 +296,7 @@ export default function App() {
       const apiConfigured = Boolean(translationStatus?.configured);
       const shouldCallApi =
         apiConfigured &&
-        ((preferences.translationMode === 'always_api' && result.source !== 'glossary') ||
+        (preferences.translationMode === 'always_api' ||
           (preferences.translationMode === 'auto_fallback' && !result.found));
 
       setActiveLookup((prev) =>
@@ -314,12 +315,13 @@ export default function App() {
 
       if (shouldCallApi) {
         try {
-          const apiResult = await studyhubApi.translateWord({
+          const rawApiResult = await studyhubApi.translateWord({
             surface: payload.matchedGlossaryKey || payload.surface,
             sentence: payload.sentence,
             subject: payload.subject,
           });
           if (lookupSeqRef.current !== seq) return;
+          const apiResult = mergeLookupEnrichment(result, rawApiResult);
           finalResult = apiResult;
 
           const alreadyInVocab = vocabLookupMap.get(normalizeWordKey(apiResult.word));
@@ -405,21 +407,23 @@ export default function App() {
     ],
   );
 
-  // 在点词弹窗中手动触发「模型翻译」或「重译」
+  // 在弹窗中手动触发「AI 多义词/重译」
   const handleRequestApiTranslate = useCallback(async () => {
     if (!activeLookup?.result) return;
     const seq = lookupSeqRef.current;
-    const targetSurface = activeLookup.result.surface || activeLookup.result.word;
+    const baseResult = activeLookup.result;
+    const targetSurface = baseResult.surface || baseResult.word;
     setActiveLookup((prev) =>
       prev ? { ...prev, translatingApi: true, apiError: '', autoSaved: false } : null,
     );
     try {
-      const apiResult = await studyhubApi.translateWord({
+      const rawApiResult = await studyhubApi.translateWord({
         surface: targetSurface,
         sentence: activeLookup.sentence,
         subject: activeLookup.subject,
       });
       if (lookupSeqRef.current !== seq) return;
+      const apiResult = mergeLookupEnrichment(baseResult, rawApiResult);
 
       let autoSaved = false;
       const alreadyInVocab = vocabLookupMap.get(normalizeWordKey(apiResult.word));
@@ -851,7 +855,19 @@ export default function App() {
         lookup={activeLookup}
         existingEntry={existingPopoverEntry}
         translationConfigured={Boolean(translationStatus?.configured)}
+        translationModel={translationStatus?.model}
         onRequestApiTranslate={handleRequestApiTranslate}
+        onSelectSynonym={(synonym) => {
+          if (!activeLookup) return;
+          void handleWordClick({
+            surface: synonym,
+            sentence: activeLookup.sentence,
+            anchorRect: activeLookup.anchorRect,
+            source: activeLookup.source,
+            subject: activeLookup.subject,
+            trigger: activeLookup.openedBy ?? 'click',
+          });
+        }}
         onAddVocab={handleAddVocab}
         onUpdateExistingMeaning={(id, meaningZh) =>
           handleUpdateWord(id, { meaning_zh: meaningZh })

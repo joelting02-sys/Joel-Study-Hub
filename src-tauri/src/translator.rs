@@ -516,6 +516,56 @@ fn pick_str(map: &serde_json::Map<String, Value>, keys: &[&str]) -> String {
     String::new()
 }
 
+fn pick_str_list(
+    map: &serde_json::Map<String, Value>,
+    keys: &[&str],
+    exclude_values: &[&str],
+    limit: usize,
+) -> Vec<String> {
+    let excluded: Vec<String> = exclude_values
+        .iter()
+        .map(|v| v.trim().to_lowercase())
+        .filter(|v| !v.is_empty())
+        .collect();
+    let mut out: Vec<String> = Vec::new();
+    let mut push_item = |raw: &str| {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            return;
+        }
+        let lower = trimmed.to_lowercase();
+        if excluded.iter().any(|e| e == &lower) {
+            return;
+        }
+        if !out.iter().any(|existing| existing.to_lowercase() == lower) && out.len() < limit {
+            out.push(trimmed.to_string());
+        }
+    };
+
+    for k in keys {
+        if let Some(val) = map.get(*k) {
+            if let Some(arr) = val.as_array() {
+                for item in arr {
+                    if let Some(s) = item.as_str() {
+                        push_item(s);
+                    }
+                }
+                if !out.is_empty() {
+                    return out;
+                }
+            } else if let Some(s) = val.as_str() {
+                for part in s.split(|c: char| matches!(c, '；' | ';' | '，' | ',')) {
+                    push_item(part);
+                }
+                if !out.is_empty() {
+                    return out;
+                }
+            }
+        }
+    }
+    out
+}
+
 fn extract_text_from_responses_api(map: &serde_json::Map<String, Value>) -> String {
     if let Some(s) = map.get("output_text").and_then(|v| v.as_str()) {
         let trimmed = s.trim();
@@ -598,6 +648,9 @@ pub fn parse_translation_payload(
     let mut phonetic = String::new();
     let mut pos = String::new();
     let mut meaning_zh = String::new();
+    let mut plain_zh = String::new();
+    let mut alternatives: Vec<String> = Vec::new();
+    let mut synonyms: Vec<String> = Vec::new();
 
     if let Some(map) = obj {
         let w = pick_str(&map, &["word", "lemma", "base_form"]);
@@ -619,6 +672,40 @@ pub fn parse_translation_payload(
                 "result",
                 "text",
             ],
+        );
+        plain_zh = pick_str(
+            &map,
+            &[
+                "plain_zh",
+                "plainZh",
+                "simple_zh",
+                "colloquial_zh",
+                "explanation_zh",
+                "explanation",
+            ],
+        );
+        alternatives = pick_str_list(
+            &map,
+            &[
+                "alternatives",
+                "chinese_synonyms",
+                "other_meanings",
+                "cn_synonyms",
+                "translations",
+            ],
+            &[&meaning_zh],
+            6,
+        );
+        synonyms = pick_str_list(
+            &map,
+            &[
+                "synonyms",
+                "english_synonyms",
+                "similar_words",
+                "related_words",
+            ],
+            &[&word, &cleaned_surface],
+            6,
         );
     }
 
@@ -648,9 +735,17 @@ pub fn parse_translation_payload(
         phonetic,
         pos,
         meaning_zh,
+        plain_zh: if plain_zh.is_empty() {
+            None
+        } else {
+            Some(plain_zh)
+        },
+        alternatives,
+        synonyms,
         source: "api".to_string(),
         lemma_note,
         found: true,
+        ..Default::default()
     })
 }
 
@@ -780,7 +875,7 @@ pub async fn translate_word_with_api(
             "messages": [
                 {
                     "role": "system",
-                    "content": "You are a concise English-to-Chinese academic dictionary and translator. Given an English word or phrase, its optional sentence context, and subject, respond with ONLY a valid JSON object containing: {\"word\":\"standard base form (lemma) or original phrase\",\"phonetic\":\"IPA without slashes, optional\",\"pos\":\"brief part of speech like n. / v. / adj. / phrase\",\"meaning_zh\":\"concise Chinese translation (1-3 senses, prioritizing the meaning in context)\"}. Do not include markdown code fences or extra commentary."
+                    "content": "You are a helpful English-to-Chinese bilingual dictionary and study coach. Given an English word or phrase, its optional sentence context, and subject, respond with ONLY a valid JSON object containing: {\"word\":\"standard base form (lemma) or original phrase\",\"phonetic\":\"IPA without slashes, optional\",\"pos\":\"brief part of speech like n. / v. / adj. / phrase\",\"meaning_zh\":\"2-4 Chinese meanings covering both formal/academic context and everyday senses, separated by ；\",\"plain_zh\":\"1 concise plain-Chinese intuitive explanation so a learner immediately understands what it means in real life (e.g. for stakeholder: 跟企业或项目有利害关系的人，如股东、员工、客户)\",\"alternatives\":[\"2-4 different intuitive Chinese synonyms or everyday ways to say it, e.g. 股东, 利益方, 相关方, 干系人\"],\"synonyms\":[\"2-4 common English synonyms or close expressions\"]}. Do not include markdown code fences or extra commentary."
                 },
                 {
                     "role": "user",
@@ -871,5 +966,21 @@ mod tests {
         let res = parse_translation_payload(&doubao_resp, "amortization").unwrap();
         assert_eq!(res.meaning_zh, "摊销");
         assert_eq!(res.source, "api");
+
+        let rich_chat_resp = json!({
+            "choices": [{
+                "message": {
+                    "content": "{\"word\":\"stakeholder\",\"phonetic\":\"ˈsteɪkhəʊldə(r)\",\"pos\":\"n.\",\"meaning_zh\":\"利益相关者；干系人\",\"plain_zh\":\"跟企业或项目有利害关系的人（如股东、员工、客户）\",\"alternatives\":[\"股东\",\"利益方\",\"相关方\"],\"synonyms\":[\"shareholder\",\"interested party\",\"stakeholder\"]}"
+                }
+            }]
+        });
+        let rich = parse_translation_payload(&rich_chat_resp, "stakeholders").unwrap();
+        assert_eq!(rich.word, "stakeholder");
+        assert_eq!(
+            rich.plain_zh.as_deref(),
+            Some("跟企业或项目有利害关系的人（如股东、员工、客户）")
+        );
+        assert_eq!(rich.alternatives, vec!["股东", "利益方", "相关方"]);
+        assert_eq!(rich.synonyms, vec!["shareholder", "interested party"]);
     }
 }

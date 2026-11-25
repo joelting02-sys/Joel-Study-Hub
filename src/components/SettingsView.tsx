@@ -45,6 +45,7 @@ import type {
   WordLookupTrigger,
 } from '../types/studyhub';
 import { extractErrorMessage } from '../lib/errors';
+import { isDedicatedTranslationModel, pickPreferredChatModel } from '../lib/lookupHelpers';
 
 const DOUBAO_DEFAULT_BASE_URL = 'https://ark.cn-beijing.volces.com/api/v3';
 const DOUBAO_DEFAULT_MODEL = 'doubao-seed-translation-250915';
@@ -151,14 +152,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         setCustomModelMode(false);
         setModelInput((prev) => {
           if (prev.trim()) return prev;
-          const doubaoPreferred = res.models.find((m) => {
-            const lower = m.toLowerCase();
-            return (
-              lower.includes('doubao-seed-translation') ||
-              lower.includes('doubao-translate')
-            );
-          });
-          return doubaoPreferred || res.models[0];
+          return pickPreferredChatModel(res.models) || res.models[0];
         });
       }
       if (res.note) {
@@ -351,7 +345,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               软件更新
             </h2>
             <span className="font-mono text-xs text-slate-500 dark:text-slate-400">
-              当前版本 v{updateState?.currentVersion || '1.0.6'}
+              当前版本 v{updateState?.currentVersion || '1.0.7'}
             </span>
           </div>
 
@@ -733,6 +727,27 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 {detectNote}
               </p>
             )}
+
+            {isDedicatedTranslationModel(modelInput) && (
+              <div className="rounded-lg border border-amber-200 bg-amber-50/70 px-3 py-2 text-xs leading-relaxed text-amber-800 dark:border-amber-800/60 dark:bg-amber-950/30 dark:text-amber-300">
+                <p>
+                  提示：「<span className="font-mono">{modelInput}</span>」属于纯直译通道，每次仅输出单个固定译文（如 stakeholder → 利益相关者）。如果要像 Trae 对话模型那样同时显示<strong>多种说法、大白话解释（如「股东」）和英文同义词</strong>，请改选通用对话模型（如 <span className="font-mono">auto/hy4flash-free</span> 或 <span className="font-mono">auto/deepseek-v4.1-flash</span>）。
+                </p>
+                {(() => {
+                  const suggested = pickPreferredChatModel(detectedModels);
+                  if (!suggested) return null;
+                  return (
+                    <button
+                      type="button"
+                      onClick={() => setModelInput(suggested)}
+                      className="mt-1.5 inline-flex items-center gap-1 rounded-md border border-amber-300 bg-white px-2.5 py-1 text-xs font-semibold text-amber-900 transition-colors hover:bg-amber-100 dark:border-amber-700 dark:bg-slate-900 dark:text-amber-200 dark:hover:bg-slate-800"
+                    >
+                      一键切换为 {suggested}
+                    </button>
+                  );
+                })()}
+              </div>
+            )}
           </div>
 
           {/* 保存与一键测试 */}
@@ -788,14 +803,31 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             )
           )}
           {testResult && (
-            <div className="rounded-lg border border-emerald-200 bg-emerald-50/70 px-3.5 py-2.5 text-sm text-emerald-900 dark:border-emerald-800/60 dark:bg-emerald-950/40 dark:text-emerald-200">
-              <span className="font-semibold">测试成功：</span>
-              <span className="font-bold">{testResult.word}</span>
-              {testResult.phonetic && (
-                <span className="ml-2 font-mono text-xs">/{testResult.phonetic}/</span>
+            <div className="space-y-1 rounded-lg border border-emerald-200 bg-emerald-50/70 px-3.5 py-2.5 text-sm text-emerald-900 dark:border-emerald-800/60 dark:bg-emerald-950/40 dark:text-emerald-200">
+              <div>
+                <span className="font-semibold">测试成功：</span>
+                <span className="font-bold">{testResult.word}</span>
+                {testResult.phonetic && (
+                  <span className="ml-2 font-mono text-xs">/{testResult.phonetic}/</span>
+                )}
+                {testResult.pos && <span className="ml-2 text-xs">{testResult.pos}</span>}
+                <span className="ml-2">— {testResult.meaning_zh}</span>
+              </div>
+              {testResult.plain_zh && (
+                <p className="text-xs text-emerald-800 dark:text-emerald-300">
+                  通俗说法：{testResult.plain_zh}
+                </p>
               )}
-              {testResult.pos && <span className="ml-2 text-xs">{testResult.pos}</span>}
-              <span className="ml-2">— {testResult.meaning_zh}</span>
+              {testResult.alternatives && testResult.alternatives.length > 0 && (
+                <p className="text-xs text-emerald-800 dark:text-emerald-300">
+                  不同说法：{testResult.alternatives.join(' · ')}
+                </p>
+              )}
+              {testResult.synonyms && testResult.synonyms.length > 0 && (
+                <p className="text-xs text-emerald-800 dark:text-emerald-300">
+                  英文同义词：{testResult.synonyms.join(' · ')}
+                </p>
+              )}
             </div>
           )}
         </form>

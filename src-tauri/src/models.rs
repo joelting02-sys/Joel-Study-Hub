@@ -242,13 +242,21 @@ pub struct LookupOptionsInput {
     pub matched_glossary_key: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct LookupResult {
     pub word: String,
     pub surface: String,
     pub phonetic: String,
     pub pos: String,
     pub meaning_zh: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plain_zh: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub alternatives: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub synonyms: Vec<String>,
+    #[serde(rename = "glossaryNote", default, skip_serializing_if = "Option::is_none")]
+    pub glossary_note: Option<String>,
     pub source: String,
     #[serde(rename = "lemmaNote", skip_serializing_if = "Option::is_none")]
     pub lemma_note: Option<String>,

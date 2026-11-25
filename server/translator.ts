@@ -447,6 +447,41 @@ function pickString(obj: Record<string, unknown>, keys: string[]): string {
   return '';
 }
 
+function pickStringList(
+  obj: Record<string, unknown>,
+  keys: string[],
+  excludeValues: string[] = [],
+  limit = 6,
+): string[] {
+  const excluded = new Set(excludeValues.map((v) => v.trim().toLowerCase()).filter(Boolean));
+  const out: string[] = [];
+  const pushItem = (raw: string) => {
+    const trimmed = raw.trim();
+    if (!trimmed) return;
+    const lower = trimmed.toLowerCase();
+    if (excluded.has(lower)) return;
+    if (!out.some((x) => x.toLowerCase() === lower) && out.length < limit) {
+      out.push(trimmed);
+    }
+  };
+
+  for (const key of keys) {
+    const val = obj[key];
+    if (Array.isArray(val)) {
+      for (const item of val) {
+        if (typeof item === 'string') pushItem(item);
+      }
+      if (out.length > 0) return out;
+    } else if (typeof val === 'string' && val.trim()) {
+      for (const part of val.split(/[；;，,]/)) {
+        pushItem(part);
+      }
+      if (out.length > 0) return out;
+    }
+  }
+  return out;
+}
+
 function extractTextFromResponsesApi(record: Record<string, unknown>): string {
   if (typeof record.output_text === 'string' && record.output_text.trim()) {
     return record.output_text.trim();
@@ -522,6 +557,9 @@ export function parseModelTranslationPayload(
   let phonetic = '';
   let pos = '';
   let meaningZh = '';
+  let plainZh = '';
+  let alternatives: string[] = [];
+  let synonyms: string[] = [];
 
   if (obj) {
     word = pickString(obj, ['word', 'lemma', 'base_form']) || cleanedSurface;
@@ -536,6 +574,24 @@ export function parseModelTranslationPayload(
       'result',
       'text',
     ]);
+    plainZh = pickString(obj, [
+      'plain_zh',
+      'plainZh',
+      'simple_zh',
+      'colloquial_zh',
+      'explanation_zh',
+      'explanation',
+    ]);
+    alternatives = pickStringList(
+      obj,
+      ['alternatives', 'chinese_synonyms', 'other_meanings', 'cn_synonyms', 'translations'],
+      [meaningZh],
+    );
+    synonyms = pickStringList(
+      obj,
+      ['synonyms', 'english_synonyms', 'similar_words', 'related_words'],
+      [word, cleanedSurface],
+    );
   }
 
   if (!meaningZh && plainTextFallback) {
@@ -557,6 +613,9 @@ export function parseModelTranslationPayload(
     phonetic,
     pos,
     meaning_zh: meaningZh,
+    ...(plainZh ? { plain_zh: plainZh } : {}),
+    ...(alternatives.length > 0 ? { alternatives } : {}),
+    ...(synonyms.length > 0 ? { synonyms } : {}),
     source: 'api',
     lemmaNote,
     found: true,
@@ -702,9 +761,9 @@ export async function translateWordWithApi(
             {
               role: 'system',
               content:
-                'You are a concise English-to-Chinese academic dictionary and translator. ' +
+                'You are a helpful English-to-Chinese bilingual dictionary and study coach. ' +
                 'Given an English word or phrase, its optional sentence context, and subject, respond with ONLY a valid JSON object containing: ' +
-                '{"word":"standard base form (lemma) or original phrase","phonetic":"IPA without slashes, optional","pos":"brief part of speech like n. / v. / adj. / phrase","meaning_zh":"concise Chinese translation (1-3 senses, prioritizing the meaning in context)"}. ' +
+                '{"word":"standard base form (lemma) or original phrase","phonetic":"IPA without slashes, optional","pos":"brief part of speech like n. / v. / adj. / phrase","meaning_zh":"2-4 Chinese meanings covering both formal/academic context and everyday senses, separated by ；","plain_zh":"1 concise plain-Chinese intuitive explanation so a learner immediately understands what it means in real life (e.g. for stakeholder: 跟企业或项目有利害关系的人，如股东、员工、客户)","alternatives":["2-4 different intuitive Chinese synonyms or everyday ways to say it, e.g. 股东, 利益方, 相关方, 干系人"],"synonyms":["2-4 common English synonyms or close expressions"]}. ' +
                 'Do not include markdown code fences or extra commentary.',
             },
             {

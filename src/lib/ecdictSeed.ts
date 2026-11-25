@@ -183,7 +183,7 @@ export const BUILTIN_ECDICT_RECORDS: EcdictRecord[] = [
   { word: 'subsidy', phonetic: 'ˈsʌbsədi', pos: 'n.', translation: '补贴；津贴；补助金', exchange: 's:subsidies' },
   { word: 'tariff', phonetic: 'ˈtærɪf', pos: 'n.', translation: '关税；收费表', exchange: 's:tariffs' },
   { word: 'externality', phonetic: 'ˌekstɜːˈnæləti', pos: 'n.', translation: '外部性；外部效应', exchange: 's:externalities' },
-  { word: 'stakeholder', phonetic: 'ˈsteɪkhəʊldə(r)', pos: 'n.', translation: '利益相关者；干系人', exchange: 's:stakeholders' },
+  { word: 'stakeholder', phonetic: 'ˈsteɪkhəʊldə(r)', pos: 'n.', translation: '利益相关者；股东；干系人；利益方', exchange: 's:stakeholders' },
   { word: 'shareholder', phonetic: 'ˈʃeəhəʊldə(r)', pos: 'n.', translation: '股东；股票持有人', exchange: 's:shareholders' },
   { word: 'incentive', phonetic: 'ɪnˈsentɪv', pos: 'n.', translation: '激励；动机；奖励机制', exchange: 's:incentives' },
   { word: 'allocate', phonetic: 'ˈæləkeɪt', pos: 'v.', translation: '分配；配置；拨出', exchange: 'p:allocated/d:allocated/i:allocating/3:allocates' },
