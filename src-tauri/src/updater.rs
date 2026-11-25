@@ -164,38 +164,29 @@ impl UpdaterManager {
         };
 
         let api_url = format!("https://api.github.com/repos/{repo}/releases/latest");
-        let resp = match client
+        let api_resp = client
             .get(&api_url)
             .header("Accept", "application/vnd.github+json")
             .send()
-            .await
-        {
-            Ok(r) => r,
-            Err(err) => {
-                return self.update_and_emit(app, |s| {
-                    s.phase = "error".to_string();
-                    s.message = Some(format!("无法连接 GitHub Releases：{err}"));
-                });
-            }
+            .await;
+
+        let release_opt: Option<GithubReleaseResponse> = match api_resp {
+            Ok(r) if r.status().is_success() => r.json().await.ok(),
+            _ => None,
         };
 
-        if !resp.status().is_success() {
-            let code = resp.status().as_u16();
-            return self.update_and_emit(app, |s| {
-                s.phase = "error".to_string();
-                s.message = Some(format!(
-                    "GitHub Releases 查询失败 (HTTP {code})，请确认仓库为公开仓库且已发布 Release。"
-                ));
-            });
-        }
-
-        let release: GithubReleaseResponse = match resp.json().await {
-            Ok(r) => r,
-            Err(err) => {
-                return self.update_and_emit(app, |s| {
-                    s.phase = "error".to_string();
-                    s.message = Some(format!("解析 GitHub Release 响应失败：{err}"));
-                });
+        let release: GithubReleaseResponse = if let Some(rel) = release_opt {
+            rel
+        } else {
+            // api.github.com 匿名请求易触发每小时 60 次 HTTP 403 限流，回退到 github.com/releases/latest 重定向（无 API 限流）
+            match fetch_latest_release_via_web(&client, &repo).await {
+                Ok(rel) => rel,
+                Err(err) => {
+                    return self.update_and_emit(app, |s| {
+                        s.phase = "error".to_string();
+                        s.message = Some(err);
+                    });
+                }
             }
         };
 
@@ -477,6 +468,100 @@ impl UpdaterManager {
     }
 }
 
+pub fn extract_tag_from_release_url(final_url: &str) -> Option<String> {
+    let idx = final_url.find("/releases/tag/")?;
+    let after = &final_url[idx + "/releases/tag/".len()..];
+    let tag = after.split(['?', '#', '/']).next()?.trim();
+    if tag.is_empty() {
+        None
+    } else {
+        Some(tag.to_string())
+    }
+}
+
+async fn fetch_latest_release_via_web(
+    client: &reqwest::Client,
+    repo: &str,
+) -> Result<GithubReleaseResponse, String> {
+    let latest_web_url = format!("https://github.com/{repo}/releases/latest");
+    let resp = client
+        .head(&latest_web_url)
+        .send()
+        .await
+        .map_err(|e| format!("无法连接 GitHub Releases：{e}"))?;
+
+    let final_url = resp.url().to_string();
+    let tag_name = if let Some(tag) = extract_tag_from_release_url(&final_url) {
+        tag
+    } else {
+        // 部分代理环境下 HEAD 可能未重定向，回退用 GET 再取一次最终 URL
+        let get_resp = client
+            .get(&latest_web_url)
+            .send()
+            .await
+            .map_err(|e| format!("无法连接 GitHub Releases：{e}"))?;
+        let get_final_url = get_resp.url().to_string();
+        if !get_resp.status().is_success() {
+            return Err(format!(
+                "GitHub Releases 查询失败 (HTTP {})，请确认仓库为公开仓库且已发布 Release。",
+                get_resp.status().as_u16()
+            ));
+        }
+        extract_tag_from_release_url(&get_final_url)
+            .ok_or_else(|| "未能从 GitHub Releases 重定向地址解析到最新版本号。".to_string())?
+    };
+
+    let clean_ver = strip_v_prefix(&tag_name);
+    let default_setup_name = format!("StudyHub-Setup-{clean_ver}.exe");
+    let checksums_url = format!("https://github.com/{repo}/releases/download/{tag_name}/checksums.txt");
+
+    let mut setup_name = default_setup_name;
+    let mut has_checksums = false;
+    if let Ok(cs_resp) = client.get(&checksums_url).send().await {
+        if cs_resp.status().is_success() {
+            has_checksums = true;
+            if let Ok(cs_body) = cs_resp.text().await {
+                if let Some(found_name) = cs_body
+                    .lines()
+                    .filter_map(|line| line.split_whitespace().nth(1))
+                    .map(|name| name.trim_start_matches('*').to_string())
+                    .find(|name| {
+                        let lower = name.to_lowercase();
+                        lower.ends_with(".exe") && lower.contains("setup") && !lower.contains("portable")
+                    })
+                {
+                    setup_name = found_name;
+                }
+            }
+        }
+    }
+
+    let setup_url = format!("https://github.com/{repo}/releases/download/{tag_name}/{setup_name}");
+    let setup_size = match client.head(&setup_url).send().await {
+        Ok(r) if r.status().is_success() => r.content_length().unwrap_or(0),
+        _ => 0,
+    };
+
+    let mut assets = vec![GithubReleaseAsset {
+        name: setup_name,
+        browser_download_url: setup_url,
+        size: setup_size,
+    }];
+    if has_checksums {
+        assets.push(GithubReleaseAsset {
+            name: "checksums.txt".to_string(),
+            browser_download_url: checksums_url,
+            size: 0,
+        });
+    }
+
+    Ok(GithubReleaseResponse {
+        html_url: format!("https://github.com/{repo}/releases/tag/{tag_name}"),
+        tag_name,
+        assets,
+    })
+}
+
 pub fn strip_v_prefix(raw: &str) -> String {
     raw.trim()
         .trim_start_matches('v')
@@ -550,5 +635,21 @@ bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb *StudyHub-Porta
             Some("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string())
         );
         assert_eq!(parse_sha256_for_asset(sample, "missing.exe"), None);
+    }
+
+    #[test]
+    fn extracts_tag_from_github_release_redirect_url() {
+        assert_eq!(
+            extract_tag_from_release_url("https://github.com/joelting02-sys/Joel-Study-Hub/releases/tag/v1.0.3"),
+            Some("v1.0.3".to_string())
+        );
+        assert_eq!(
+            extract_tag_from_release_url("https://github.com/joelting02-sys/Joel-Study-Hub/releases/tag/v1.0.4?foo=bar"),
+            Some("v1.0.4".to_string())
+        );
+        assert_eq!(
+            extract_tag_from_release_url("https://github.com/joelting02-sys/Joel-Study-Hub/releases"),
+            None
+        );
     }
 }
