@@ -3,7 +3,7 @@ use chrono::{Duration, Local, NaiveDate, Utc};
 use std::collections::HashSet;
 use uuid::Uuid;
 
-pub const REVIEW_INTERVAL_STEPS: [i64; 4] = [1, 3, 7, 14];
+pub const REVIEW_INTERVAL_STEPS: [i64; 4] = [1, 3, 7, 15];
 
 pub fn normalize_word_key(word: &str) -> String {
     word.split_whitespace()
@@ -34,7 +34,7 @@ pub fn add_days_to_ymd(ymd: &str, days: i64) -> String {
         .to_string()
 }
 
-/// 记忆曲线：记得 1 -> 3 -> 7 -> 14（上限 14）；忘了重置为 1
+/// 记忆曲线：记得 1 -> 3 -> 7 -> 15（上限 15）；忘了重置为 1
 pub fn calculate_next_review(
     current_interval_days: i64,
     remembered: bool,
@@ -47,7 +47,7 @@ pub fn calculate_next_review(
         };
     }
 
-    let mut next_interval = 14;
+    let mut next_interval = 15;
     for step in REVIEW_INTERVAL_STEPS {
         if step > current_interval_days {
             next_interval = step;
@@ -225,7 +225,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn review_intervals_follow_1_3_7_14_and_reset() {
+    fn review_intervals_follow_1_3_7_15_and_reset() {
         let r1 = calculate_next_review(1, true, "2026-05-01");
         assert_eq!(r1.interval_days, 3);
         assert_eq!(r1.next_review, "2026-05-04");
@@ -234,14 +234,14 @@ mod tests {
         assert_eq!(r2.interval_days, 7);
 
         let r3 = calculate_next_review(7, true, "2026-05-11");
-        assert_eq!(r3.interval_days, 14);
+        assert_eq!(r3.interval_days, 15);
 
-        let r4 = calculate_next_review(14, true, "2026-05-25");
-        assert_eq!(r4.interval_days, 14);
+        let r4 = calculate_next_review(15, true, "2026-05-26");
+        assert_eq!(r4.interval_days, 15);
 
-        let forgot = calculate_next_review(14, false, "2026-05-25");
+        let forgot = calculate_next_review(15, false, "2026-05-26");
         assert_eq!(forgot.interval_days, 1);
-        assert_eq!(forgot.next_review, "2026-05-26");
+        assert_eq!(forgot.next_review, "2026-05-27");
     }
 
     #[test]

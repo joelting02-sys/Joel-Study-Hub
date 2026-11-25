@@ -832,6 +832,7 @@ export default function App() {
                 vocabLookupMap={vocabLookupMap}
                 fontScale={preferences.fontScale}
                 onRecordReview={handleRecordReview}
+                onMarkWordStatus={(id, status) => handleUpdateWord(id, { status })}
                 onWordClick={(p) => void handleWordClick(p)}
                 onNavigateVocab={() => selectNav('vocab')}
               />

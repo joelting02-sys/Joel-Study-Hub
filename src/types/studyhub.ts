@@ -10,7 +10,7 @@ export type VocabStatus = 'learning' | 'learned';
 export interface VocabReview {
   /** 下次复习日期，格式 YYYY-MM-DD */
   next_review: string;
-  /** 当前间隔天数：1 -> 3 -> 7 -> 14 */
+  /** 当前间隔天数：1 -> 3 -> 7 -> 15 */
   interval_days: number;
 }
 

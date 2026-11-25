@@ -9,8 +9,25 @@ import type {
   VocabStatus,
 } from '../types/studyhub.ts';
 
-/** 记忆曲线间隔阶梯：1 -> 3 -> 7 -> 14 天 */
-export const REVIEW_INTERVAL_STEPS = [1, 3, 7, 14] as const;
+/** 艾宾浩斯遗忘曲线间隔阶梯：第 1 -> 3 -> 7 -> 15 天（共 4 轮） */
+export const REVIEW_INTERVAL_STEPS = [1, 3, 7, 15] as const;
+
+export interface ReviewStageInfo {
+  stage: number;
+  totalStages: number;
+  isFinalStage: boolean;
+}
+
+/**
+ * 根据当前间隔天数判定所处的艾宾浩斯复习轮次（共 4 轮）
+ */
+export function getReviewStageInfo(intervalDays: number): ReviewStageInfo {
+  const totalStages = REVIEW_INTERVAL_STEPS.length;
+  if (intervalDays <= 1) return { stage: 1, totalStages, isFinalStage: false };
+  if (intervalDays <= 3) return { stage: 2, totalStages, isFinalStage: false };
+  if (intervalDays <= 7) return { stage: 3, totalStages, isFinalStage: false };
+  return { stage: totalStages, totalStages, isFinalStage: true };
+}
 
 export function normalizeWordKey(word: string): string {
   return word.trim().toLowerCase().replace(/\s+/g, ' ');
@@ -46,7 +63,7 @@ export function addDaysToYmd(ymd: string, days: number): string {
 
 /**
  * 计算下一次复习计划：
- * - 记得：1 -> 3 -> 7 -> 14 天（达到 14 天保持 14 天）
+ * - 记得：1 -> 3 -> 7 -> 15 天（达到 15 天保持 15 天，可在卡片上点「会了」毕业）
  * - 忘了：回到 1 天
  */
 export function calculateNextReview(
@@ -61,7 +78,7 @@ export function calculateNextReview(
     };
   }
 
-  let nextInterval: number = 14;
+  let nextInterval: number = 15;
   for (const step of REVIEW_INTERVAL_STEPS) {
     if (step > currentIntervalDays) {
       nextInterval = step;

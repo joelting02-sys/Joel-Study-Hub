@@ -6,6 +6,7 @@ import {
   exportVocabToMarkdown,
   filterAndSortVocab,
   getDueReviewWords,
+  getReviewStageInfo,
   markWordStatus,
   mergeInboxWords,
 } from './vocabLogic';
@@ -48,7 +49,7 @@ test('addOrIncrementVocab avoids duplicates and increments lookup_count', () => 
   assert.equal(second.entry.lookup_count, 2);
 });
 
-test('calculateNextReview follows 1 -> 3 -> 7 -> 14 and resets to 1 when forgotten', () => {
+test('calculateNextReview follows 1 -> 3 -> 7 -> 15 and resets to 1 when forgotten', () => {
   assert.deepEqual(calculateNextReview(1, true, '2026-11-21'), {
     interval_days: 3,
     next_review: '2026-11-24',
@@ -58,17 +59,22 @@ test('calculateNextReview follows 1 -> 3 -> 7 -> 14 and resets to 1 when forgott
     next_review: '2026-12-01',
   });
   assert.deepEqual(calculateNextReview(7, true, '2026-12-01'), {
-    interval_days: 14,
-    next_review: '2026-12-15',
+    interval_days: 15,
+    next_review: '2026-12-16',
   });
-  assert.deepEqual(calculateNextReview(14, true, '2026-12-15'), {
-    interval_days: 14,
-    next_review: '2026-12-29',
+  assert.deepEqual(calculateNextReview(15, true, '2026-12-16'), {
+    interval_days: 15,
+    next_review: '2026-12-31',
   });
   assert.deepEqual(calculateNextReview(7, false, '2026-12-01'), {
     interval_days: 1,
     next_review: '2026-12-02',
   });
+
+  assert.deepEqual(getReviewStageInfo(1), { stage: 1, totalStages: 4, isFinalStage: false });
+  assert.deepEqual(getReviewStageInfo(3), { stage: 2, totalStages: 4, isFinalStage: false });
+  assert.deepEqual(getReviewStageInfo(7), { stage: 3, totalStages: 4, isFinalStage: false });
+  assert.deepEqual(getReviewStageInfo(15), { stage: 4, totalStages: 4, isFinalStage: true });
 });
 
 test('learned words never appear in due review list', () => {
