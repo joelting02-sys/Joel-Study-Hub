@@ -41,7 +41,8 @@ function isPrivateOrRestrictedIpv4(ip: string): boolean {
     return true;
   }
   const [a, b] = parts;
-  if (a === 0 || a === 10 || a === 127) return true;
+  // 允许 127.0.0.0/8 本地回环地址（用于 Magpie / Ollama 等本机大模型网关）
+  if (a === 0 || a === 10) return true;
   if (a === 169 && b === 254) return true;
   if (a === 172 && b >= 16 && b <= 31) return true;
   if (a === 192 && b === 168) return true;
@@ -51,7 +52,8 @@ function isPrivateOrRestrictedIpv4(ip: string): boolean {
 
 function isPrivateOrRestrictedIpv6(ip: string): boolean {
   const normalized = ip.toLowerCase();
-  if (normalized === '::1' || normalized === '::') return true;
+  if (normalized === '::') return true;
+  if (normalized === '::1') return false;
   if (normalized.startsWith('fc') || normalized.startsWith('fd')) return true;
   if (
     normalized.startsWith('fe8') ||
@@ -71,21 +73,24 @@ function isPrivateOrRestrictedIpv6(ip: string): boolean {
 }
 
 /**
- * 校验翻译 API Base URL：仅允许 http/https，且拒绝回环、私网、链接本地与元数据主机
+ * 校验翻译 API Base URL：允许公网 http/https 及本机回环网关（如 Magpie 127.0.0.1 / localhost），拒绝私网与云元数据地址
  */
 export function validateTranslationEndpoint(
   rawUrl: string,
 ): { ok: true; url: URL } | { ok: false; error: string } {
   const trimmed = rawUrl.trim();
   if (!trimmed) {
-    return { ok: false, error: '请填写 Base URL（例如 https://ark.cn-beijing.volces.com/api/v3）' };
+    return {
+      ok: false,
+      error: '请填写 Base URL（例如 https://ark.cn-beijing.volces.com/api/v3 或 http://127.0.0.1:3425/v1）',
+    };
   }
 
   let parsed: URL;
   try {
     parsed = new URL(trimmed);
   } catch {
-    return { ok: false, error: 'Base URL 格式无效，请以 https:// 开头' };
+    return { ok: false, error: 'Base URL 格式无效，请以 https:// 或 http:// 开头' };
   }
 
   if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
@@ -102,8 +107,6 @@ export function validateTranslationEndpoint(
   }
 
   const blockedHostnames = new Set([
-    'localhost',
-    'localhost.localdomain',
     'metadata.google.internal',
     'metadata',
     'instance-data',
@@ -111,18 +114,17 @@ export function validateTranslationEndpoint(
   if (
     blockedHostnames.has(hostname) ||
     hostname.endsWith('.local') ||
-    hostname.endsWith('.internal') ||
-    hostname.endsWith('.localhost')
+    hostname.endsWith('.internal')
   ) {
-    return { ok: false, error: '出于安全限制，接口地址不允许指向本机或内网元数据主机' };
+    return { ok: false, error: '出于安全限制，接口地址不允许指向局域网广播主机或云元数据服务' };
   }
 
   const ipVersion = net.isIP(hostname);
   if (ipVersion === 4 && isPrivateOrRestrictedIpv4(hostname)) {
-    return { ok: false, error: '出于安全限制，接口地址不允许指向私网或回环 IPv4 地址' };
+    return { ok: false, error: '出于安全限制，接口地址不允许指向内网私网或云元数据 IPv4 地址' };
   }
   if (ipVersion === 6 && isPrivateOrRestrictedIpv6(hostname)) {
-    return { ok: false, error: '出于安全限制，接口地址不允许指向私网或回环 IPv6 地址' };
+    return { ok: false, error: '出于安全限制，接口地址不允许指向内网私网或云元数据 IPv6 地址' };
   }
 
   return { ok: true, url: parsed };
@@ -561,9 +563,18 @@ export function parseModelTranslationPayload(
   };
 }
 
-function isDoubaoSeedTranslationModel(model: string): boolean {
-  const lower = model.toLowerCase();
-  return lower.includes('doubao-seed-translation') || lower.includes('seed-translation');
+function isDedicatedTranslationModel(model: string): boolean {
+  const lower = model.trim().toLowerCase();
+  return (
+    lower.includes('doubao-seed-translation') ||
+    lower.includes('seed-translation') ||
+    lower.includes('doubao-translate') ||
+    lower.includes('volcengine-translate') ||
+    lower.includes('microsoft-translator') ||
+    lower.endsWith('-translate') ||
+    lower.endsWith('-translator') ||
+    lower.endsWith('/translate')
+  );
 }
 
 async function postJsonWithTimeout(
@@ -633,8 +644,10 @@ export async function translateWordWithApi(
 
   const cleanedWord = cleanToken(surface) || surface;
 
-  // 1. 豆包专用翻译模型（doubao-seed-translation-*）优先走 /responses + translation_options，若代理不支持则自动回退 /chat/completions
-  if (isDoubaoSeedTranslationModel(config.model)) {
+  const dedicatedTranslator = isDedicatedTranslationModel(config.model);
+
+  // 1. 专用翻译模型（doubao-seed-translation-* / Magpie doubao-translate/* 等）优先走 /responses + translation_options，若代理不支持则自动回退 /chat/completions
+  if (dedicatedTranslator) {
     const responsesUrl = buildApiPathUrl(config.baseUrl, 'responses');
     const responsesBody = {
       model: config.model,
@@ -655,40 +668,52 @@ export async function translateWordWithApi(
       ],
     };
 
-    const resp = await postJsonWithTimeout(responsesUrl, headers, responsesBody, fetchImpl);
-    if (resp.ok) {
-      return parseModelTranslationPayload(resp.payload, surface);
-    }
-    // 只有 404/405/501 等端点不兼容时才回退 /chat/completions，鉴权错误直接返回
-    if (resp.status === 401 || resp.status === 403) {
-      throw new Error(`翻译接口鉴权失败（HTTP ${resp.status}），请检查 API Key 是否正确`);
+    try {
+      const resp = await postJsonWithTimeout(responsesUrl, headers, responsesBody, fetchImpl);
+      if (resp.ok) {
+        return parseModelTranslationPayload(resp.payload, surface);
+      }
+      // 只有 404/405/501 等端点不兼容时才回退 /chat/completions，鉴权错误直接返回
+      if (resp.status === 401 || resp.status === 403) {
+        throw new Error(`翻译接口鉴权失败（HTTP ${resp.status}），请检查 API Key 是否正确`);
+      }
+    } catch (err) {
+      if (err instanceof Error && err.message.includes('鉴权失败')) {
+        throw err;
+      }
     }
   }
 
-  // 2. 标准 OpenAI 兼容 /chat/completions（适配豆包方舟通用模型/接入点 ep-* 及所有主流 API）
+  // 2. 标准 OpenAI 兼容 /chat/completions（专用翻译通道回退时仅发纯单词，通用大模型则附带词典 JSON 提示词）
   const chatUrl = buildApiPathUrl(config.baseUrl, 'chat/completions');
-  const userPromptLines = [`Word or phrase: ${cleanedWord}`];
-  if (sentence) userPromptLines.push(`Context sentence: ${sentence}`);
-  if (subject) userPromptLines.push(`Subject/Course: ${subject}`);
-
-  const chatBody = {
-    model: config.model,
-    temperature: 0.1,
-    messages: [
-      {
-        role: 'system',
-        content:
-          'You are a concise English-to-Chinese academic dictionary and translator. ' +
-          'Given an English word or phrase, its optional sentence context, and subject, respond with ONLY a valid JSON object containing: ' +
-          '{"word":"standard base form (lemma) or original phrase","phonetic":"IPA without slashes, optional","pos":"brief part of speech like n. / v. / adj. / phrase","meaning_zh":"concise Chinese translation (1-3 senses, prioritizing the meaning in context)"}. ' +
-          'Do not include markdown code fences or extra commentary.',
-      },
-      {
-        role: 'user',
-        content: userPromptLines.join('\n'),
-      },
-    ],
-  };
+  const chatBody = dedicatedTranslator
+    ? {
+        model: config.model,
+        messages: [{ role: 'user', content: cleanedWord }],
+      }
+    : (() => {
+        const userPromptLines = [`Word or phrase: ${cleanedWord}`];
+        if (sentence) userPromptLines.push(`Context sentence: ${sentence}`);
+        if (subject) userPromptLines.push(`Subject/Course: ${subject}`);
+        return {
+          model: config.model,
+          temperature: 0.1,
+          messages: [
+            {
+              role: 'system',
+              content:
+                'You are a concise English-to-Chinese academic dictionary and translator. ' +
+                'Given an English word or phrase, its optional sentence context, and subject, respond with ONLY a valid JSON object containing: ' +
+                '{"word":"standard base form (lemma) or original phrase","phonetic":"IPA without slashes, optional","pos":"brief part of speech like n. / v. / adj. / phrase","meaning_zh":"concise Chinese translation (1-3 senses, prioritizing the meaning in context)"}. ' +
+                'Do not include markdown code fences or extra commentary.',
+            },
+            {
+              role: 'user',
+              content: userPromptLines.join('\n'),
+            },
+          ],
+        };
+      })();
 
   const chatResp = await postJsonWithTimeout(chatUrl, headers, chatBody, fetchImpl);
   if (!chatResp.ok) {

@@ -26,6 +26,7 @@ import type {
   VocabStatus,
 } from '../types/studyhub';
 import { filterAndSortVocab } from '../lib/vocabLogic';
+import { extractErrorMessage } from '../lib/errors';
 import { InteractiveText, type WordClickPayload } from './InteractiveText';
 
 interface VocabViewProps {
@@ -213,7 +214,7 @@ export const VocabView: React.FC<VocabViewProps> = ({
         setRowError(`未查到「${entry.word}」的释义，请检查翻译接口配置或手动编辑。`);
       }
     } catch (err) {
-      setRowError(err instanceof Error ? err.message : '翻译失败');
+      setRowError(extractErrorMessage(err, '翻译失败'));
     } finally {
       setTranslatingRowId(null);
     }
@@ -240,7 +241,7 @@ export const VocabView: React.FC<VocabViewProps> = ({
         setQuickManualMeaning(res.meaning_zh);
       }
     } catch (err) {
-      setQuickError(err instanceof Error ? err.message : '查词翻译失败');
+      setQuickError(extractErrorMessage(err, '查词翻译失败'));
     } finally {
       setQuickLoading(false);
     }
@@ -271,7 +272,7 @@ export const VocabView: React.FC<VocabViewProps> = ({
       setQuickResult(null);
       setQuickManualMeaning('');
     } catch (err) {
-      setQuickError(err instanceof Error ? err.message : '保存单词失败');
+      setQuickError(extractErrorMessage(err, '保存单词失败'));
     } finally {
       setQuickSaving(false);
     }

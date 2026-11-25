@@ -43,6 +43,7 @@ import type {
   TranslationApiStatus,
   TranslationMode,
 } from '../types/studyhub';
+import { extractErrorMessage } from '../lib/errors';
 
 const DOUBAO_DEFAULT_BASE_URL = 'https://ark.cn-beijing.volces.com/api/v3';
 const DOUBAO_DEFAULT_MODEL = 'doubao-seed-translation-250915';
@@ -149,9 +150,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         setCustomModelMode(false);
         setModelInput((prev) => {
           if (prev.trim()) return prev;
-          const doubaoPreferred = res.models.find((m) =>
-            m.toLowerCase().includes('doubao-seed-translation'),
-          );
+          const doubaoPreferred = res.models.find((m) => {
+            const lower = m.toLowerCase();
+            return (
+              lower.includes('doubao-seed-translation') ||
+              lower.includes('doubao-translate')
+            );
+          });
           return doubaoPreferred || res.models[0];
         });
       }
@@ -161,7 +166,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         setDetectNote(`已自动侦测到 ${res.count} 个可用模型，请在下方直接选择。`);
       }
     } catch (err) {
-      setConfigError(err instanceof Error ? err.message : '侦测可用模型失败');
+      setConfigError(extractErrorMessage(err, '侦测可用模型失败'));
     } finally {
       setDetectingModels(false);
     }
@@ -189,7 +194,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       );
       return next;
     } catch (err) {
-      setConfigError(err instanceof Error ? err.message : '保存翻译配置失败');
+      setConfigError(extractErrorMessage(err, '保存翻译配置失败'));
       return null;
     } finally {
       setSavingConfig(false);
@@ -209,7 +214,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       setApiKeyInput('');
       setConfigMsg('已清除已保存的 API Key。');
     } catch (err) {
-      setConfigError(err instanceof Error ? err.message : '清除 API Key 失败');
+      setConfigError(extractErrorMessage(err, '清除 API Key 失败'));
     } finally {
       setSavingConfig(false);
     }
@@ -241,7 +246,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       });
       setTestResult(res);
     } catch (err) {
-      setConfigError(err instanceof Error ? err.message : '测试翻译失败');
+      setConfigError(extractErrorMessage(err, '测试翻译失败'));
     } finally {
       setTestingTranslate(false);
     }
@@ -284,7 +289,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       await onChangeDataDir(dirInput.trim());
       setDirMsg('数据文件夹路径已更新，并已重新启动文件监听。');
     } catch (err) {
-      setDirError(err instanceof Error ? err.message : '路径修改失败');
+      setDirError(extractErrorMessage(err, '路径修改失败'));
     } finally {
       setSavingDir(false);
     }
@@ -303,7 +308,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         `已写入 vocab_inbox/${file.name}，按 word 去重合并 ${addedCount} 个新词，并已自动删除原 inbox 文件。`,
       );
     } catch (err) {
-      setToolError(err instanceof Error ? err.message : 'vocab_inbox JSON 解析失败');
+      setToolError(extractErrorMessage(err, 'vocab_inbox JSON 解析失败'));
     }
   };
 
@@ -318,7 +323,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       await onImportDictCsv(file.name, content);
       setToolNotice(`离线词典 ${file.name} 已导入到 dict/ 并重载完成。`);
     } catch (err) {
-      setToolError(err instanceof Error ? err.message : '词典 CSV 导入失败');
+      setToolError(extractErrorMessage(err, '词典 CSV 导入失败'));
     }
   };
 
@@ -345,7 +350,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               软件更新
             </h2>
             <span className="font-mono text-xs text-slate-500 dark:text-slate-400">
-              当前版本 v{updateState?.currentVersion || '1.0.1'}
+              当前版本 v{updateState?.currentVersion || '1.0.2'}
             </span>
           </div>
 
@@ -564,7 +569,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               type="url"
               value={baseUrlInput}
               onChange={(e) => setBaseUrlInput(e.target.value)}
-              placeholder="https://ark.cn-beijing.volces.com/api/v3"
+              placeholder="https://ark.cn-beijing.volces.com/api/v3 或 http://127.0.0.1:3425/v1"
               className="w-full rounded-lg border border-slate-300 bg-slate-50 px-3.5 py-2 font-mono text-sm text-slate-900 focus:border-blue-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
             />
           </div>

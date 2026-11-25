@@ -9,6 +9,7 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Check, Languages, Loader2, Plus, RefreshCw, X } from 'lucide-react';
 import type { LookupResult, VocabEntry } from '../types/studyhub';
+import { extractErrorMessage } from '../lib/errors';
 
 export interface ActiveLookupState {
   loading: boolean;
@@ -155,7 +156,7 @@ export const WordLookupPopover: React.FC<WordLookupPopoverProps> = ({
         subject: lookup.subject,
       });
     } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : '保存失败');
+      setErrorMsg(extractErrorMessage(err, '保存失败'));
     } finally {
       setSaving(false);
     }
@@ -169,7 +170,7 @@ export const WordLookupPopover: React.FC<WordLookupPopoverProps> = ({
       await onUpdateExistingMeaning(existingEntry.id, result.meaning_zh.trim());
       setUpdatedNotice(true);
     } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : '更新释义失败');
+      setErrorMsg(extractErrorMessage(err, '更新释义失败'));
     } finally {
       setUpdatingMeaning(false);
     }

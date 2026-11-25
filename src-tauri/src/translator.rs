@@ -104,9 +104,9 @@ fn mask_api_key(key: &str) -> Option<String> {
 
 fn is_restricted_ipv4(ip: Ipv4Addr) -> bool {
     let o = ip.octets();
+    // 允许 127.0.0.0/8 本地回环地址（用于 Magpie / Ollama 等本机大模型网关），屏蔽 0.0.0.0 与内网/云元数据网段
     o[0] == 0
         || o[0] == 10
-        || o[0] == 127
         || (o[0] == 169 && o[1] == 254)
         || (o[0] == 172 && (16..=31).contains(&o[1]))
         || (o[0] == 192 && o[1] == 168)
@@ -114,8 +114,11 @@ fn is_restricted_ipv4(ip: Ipv4Addr) -> bool {
 }
 
 fn is_restricted_ipv6(ip: Ipv6Addr) -> bool {
-    if ip.is_loopback() || ip.is_unspecified() {
+    if ip.is_unspecified() {
         return true;
+    }
+    if ip.is_loopback() {
+        return false;
     }
     if let Some(v4) = ip.to_ipv4_mapped() {
         return is_restricted_ipv4(v4);
@@ -127,9 +130,9 @@ fn is_restricted_ipv6(ip: Ipv6Addr) -> bool {
 pub fn validate_translation_endpoint(raw_url: &str) -> Result<Url, String> {
     let trimmed = raw_url.trim();
     if trimmed.is_empty() {
-        return Err("请填写 Base URL（例如 https://ark.cn-beijing.volces.com/api/v3）".to_string());
+        return Err("请填写 Base URL（例如 https://ark.cn-beijing.volces.com/api/v3 或 http://127.0.0.1:3425/v1）".to_string());
     }
-    let parsed = Url::parse(trimmed).map_err(|_| "Base URL 格式无效，请以 https:// 开头".to_string())?;
+    let parsed = Url::parse(trimmed).map_err(|_| "Base URL 格式无效，请以 https:// 或 http:// 开头".to_string())?;
     let scheme = parsed.scheme();
     if scheme != "https" && scheme != "http" {
         return Err("Base URL 仅支持 https:// 或 http:// 协议".to_string());
@@ -145,12 +148,11 @@ pub fn validate_translation_endpoint(raw_url: &str) -> Result<Url, String> {
 
     if matches!(
         host.as_str(),
-        "localhost" | "localhost.localdomain" | "metadata.google.internal" | "metadata" | "instance-data"
+        "metadata.google.internal" | "metadata" | "instance-data"
     ) || host.ends_with(".local")
         || host.ends_with(".internal")
-        || host.ends_with(".localhost")
     {
-        return Err("出于安全限制，接口地址不允许指向本机或内网元数据主机".to_string());
+        return Err("出于安全限制，接口地址不允许指向局域网广播主机或云元数据服务".to_string());
     }
 
     if let Ok(ip) = host.parse::<IpAddr>() {
@@ -159,7 +161,7 @@ pub fn validate_translation_endpoint(raw_url: &str) -> Result<Url, String> {
             IpAddr::V6(v6) => is_restricted_ipv6(v6),
         };
         if restricted {
-            return Err("出于安全限制，接口地址不允许指向私网或回环 IP 地址".to_string());
+            return Err("出于安全限制，接口地址不允许指向内网私网或云元数据 IP 地址".to_string());
         }
     }
 
@@ -652,9 +654,16 @@ pub fn parse_translation_payload(
     })
 }
 
-fn is_doubao_seed_translation_model(model: &str) -> bool {
-    let lower = model.to_lowercase();
-    lower.contains("doubao-seed-translation") || lower.contains("seed-translation")
+fn is_dedicated_translation_model(model: &str) -> bool {
+    let lower = model.trim().to_lowercase();
+    lower.contains("doubao-seed-translation")
+        || lower.contains("seed-translation")
+        || lower.contains("doubao-translate")
+        || lower.contains("volcengine-translate")
+        || lower.contains("microsoft-translator")
+        || lower.ends_with("-translate")
+        || lower.ends_with("-translator")
+        || lower.ends_with("/translate")
 }
 
 pub async fn translate_word_with_api(
@@ -705,8 +714,10 @@ pub async fn translate_word_with_api(
         .build()
         .map_err(|e| format!("初始化 HTTP 客户端失败: {e}"))?;
 
-    // 1. 豆包专用翻译模型（doubao-seed-translation-*）优先走 /responses + translation_options
-    if is_doubao_seed_translation_model(&config.model) {
+    let dedicated_translator = is_dedicated_translation_model(&config.model);
+
+    // 1. 专用翻译模型（doubao-seed-translation-* / Magpie doubao-translate/* 等）优先走 /responses + translation_options
+    if dedicated_translator {
         let responses_url = build_api_url(&config.base_url, "responses");
         let resp_body = json!({
             "model": config.model,
@@ -729,44 +740,55 @@ pub async fn translate_word_with_api(
         if !config.api_key.is_empty() {
             req = req.header("Authorization", format!("Bearer {}", config.api_key));
         }
-        let resp = req
-            .send()
-            .await
-            .map_err(|e| format!("调用翻译接口失败: {e}"))?;
-        let code = resp.status();
-        let raw_text = resp.text().await.unwrap_or_default();
-        if code.is_success() {
-            let payload = serde_json::from_str::<Value>(&raw_text).unwrap_or(Value::String(raw_text));
-            return parse_translation_payload(&payload, &surface);
-        }
-        if code.as_u16() == 401 || code.as_u16() == 403 {
-            return Err(format!("翻译接口鉴权失败（HTTP {}），请检查 API Key 是否正确", code.as_u16()));
+        if let Ok(resp) = req.send().await {
+            let code = resp.status();
+            let raw_text = resp.text().await.unwrap_or_default();
+            if code.is_success() {
+                let payload = serde_json::from_str::<Value>(&raw_text).unwrap_or(Value::String(raw_text));
+                return parse_translation_payload(&payload, &surface);
+            }
+            if code.as_u16() == 401 || code.as_u16() == 403 {
+                return Err(format!("翻译接口鉴权失败（HTTP {}），请检查 API Key 是否正确", code.as_u16()));
+            }
         }
     }
 
     // 2. 标准 OpenAI 兼容 /chat/completions
+    // 若是专用翻译通道回退到 /chat/completions，仅发送纯单词/短语避免模型把提示词标签一并直译
     let chat_url = build_api_url(&config.base_url, "chat/completions");
-    let mut lines = vec![format!("Word or phrase: {cleaned_word}")];
-    if !sentence.is_empty() {
-        lines.push(format!("Context sentence: {sentence}"));
-    }
-    if !subject.is_empty() {
-        lines.push(format!("Subject/Course: {subject}"));
-    }
-    let body = json!({
-        "model": config.model,
-        "temperature": 0.1,
-        "messages": [
-            {
-                "role": "system",
-                "content": "You are a concise English-to-Chinese academic dictionary and translator. Given an English word or phrase, its optional sentence context, and subject, respond with ONLY a valid JSON object containing: {\"word\":\"standard base form (lemma) or original phrase\",\"phonetic\":\"IPA without slashes, optional\",\"pos\":\"brief part of speech like n. / v. / adj. / phrase\",\"meaning_zh\":\"concise Chinese translation (1-3 senses, prioritizing the meaning in context)\"}. Do not include markdown code fences or extra commentary."
-            },
-            {
-                "role": "user",
-                "content": lines.join("\n")
-            }
-        ]
-    });
+    let body = if dedicated_translator {
+        json!({
+            "model": config.model,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": cleaned_word
+                }
+            ]
+        })
+    } else {
+        let mut lines = vec![format!("Word or phrase: {cleaned_word}")];
+        if !sentence.is_empty() {
+            lines.push(format!("Context sentence: {sentence}"));
+        }
+        if !subject.is_empty() {
+            lines.push(format!("Subject/Course: {subject}"));
+        }
+        json!({
+            "model": config.model,
+            "temperature": 0.1,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a concise English-to-Chinese academic dictionary and translator. Given an English word or phrase, its optional sentence context, and subject, respond with ONLY a valid JSON object containing: {\"word\":\"standard base form (lemma) or original phrase\",\"phonetic\":\"IPA without slashes, optional\",\"pos\":\"brief part of speech like n. / v. / adj. / phrase\",\"meaning_zh\":\"concise Chinese translation (1-3 senses, prioritizing the meaning in context)\"}. Do not include markdown code fences or extra commentary."
+                },
+                {
+                    "role": "user",
+                    "content": lines.join("\n")
+                }
+            ]
+        })
+    };
 
     let mut req = client
         .post(&chat_url)
@@ -803,11 +825,21 @@ mod tests {
     #[test]
     fn validates_and_blocks_private_or_metadata_hosts() {
         assert!(validate_translation_endpoint("https://ark.cn-beijing.volces.com/api/v3").is_ok());
-        assert!(validate_translation_endpoint("http://127.0.0.1:8000/v1").is_err());
-        assert!(validate_translation_endpoint("http://localhost:11434/v1").is_err());
+        assert!(validate_translation_endpoint("http://127.0.0.1:3425/v1").is_ok());
+        assert!(validate_translation_endpoint("http://localhost:11434/v1").is_ok());
+        assert!(validate_translation_endpoint("http://[::1]:3425/v1").is_ok());
+
         assert!(validate_translation_endpoint("http://169.254.169.254/latest").is_err());
         assert!(validate_translation_endpoint("http://10.0.0.5/v1").is_err());
+        assert!(validate_translation_endpoint("http://192.168.1.5/v1").is_err());
+        assert!(validate_translation_endpoint("http://metadata.google.internal/v1").is_err());
         assert!(validate_translation_endpoint("file:///etc/passwd").is_err());
+
+        assert!(is_dedicated_translation_model("doubao-seed-translation-250915"));
+        assert!(is_dedicated_translation_model("doubao-translate/doubao-ai"));
+        assert!(is_dedicated_translation_model("doubao-translate/volcengine-translate"));
+        assert!(is_dedicated_translation_model("doubao-translate/microsoft-translator"));
+        assert!(!is_dedicated_translation_model("auto/deepseek-v4.1-flash"));
     }
 
     #[test]

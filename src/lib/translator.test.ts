@@ -18,12 +18,13 @@ function makeTempConfigPath(label: string): string {
   return path.join(dir, 'studyhub-config.json');
 }
 
-test('validateTranslationEndpoint permits public HTTPS endpoints and blocks private/loopback/metadata hosts', () => {
+test('validateTranslationEndpoint permits public HTTPS and local loopback gateways while blocking LAN/metadata hosts', () => {
   assert.equal(validateTranslationEndpoint('https://ark.cn-beijing.volces.com/api/v3').ok, true);
   assert.equal(validateTranslationEndpoint('https://api.deepseek.com/v1').ok, true);
+  assert.equal(validateTranslationEndpoint('http://127.0.0.1:3425/v1').ok, true);
+  assert.equal(validateTranslationEndpoint('http://localhost:11434/v1').ok, true);
+  assert.equal(validateTranslationEndpoint('http://[::1]:3425/v1').ok, true);
 
-  assert.equal(validateTranslationEndpoint('http://localhost:8000/v1').ok, false);
-  assert.equal(validateTranslationEndpoint('http://127.0.0.1:11434/v1').ok, false);
   assert.equal(validateTranslationEndpoint('http://169.254.169.254/latest/meta-data').ok, false);
   assert.equal(validateTranslationEndpoint('http://10.0.0.1/v1').ok, false);
   assert.equal(validateTranslationEndpoint('http://192.168.1.5/v1').ok, false);
@@ -267,6 +268,52 @@ test('translateWordWithApi routes doubao-seed-translation to /responses and gene
     assert.equal(capturedBody.model, 'ep-20250501-demo');
     assert.equal(chatResult.meaning_zh, '可扩展性');
     assert.equal(chatResult.phonetic, 'ˌskeɪləˈbɪləti');
+
+    // 3. Magpie local gateway + doubao-translate/doubao-ai -> /responses and pure-word /chat/completions fallback
+    const magpieSaved = saveTranslationConfig(
+      {
+        baseUrl: 'http://127.0.0.1:3425/v1',
+        apiKey: 'sk-magpie-key-demo',
+        model: 'doubao-translate/doubao-ai',
+      },
+      cfgPath,
+    );
+    assert.equal(magpieSaved.configured, true);
+    assert.equal(magpieSaved.endpointHost, '127.0.0.1:3425');
+
+    const magpieResponsesResult = await translateWordWithApi(
+      { surface: 'amortization', sentence: 'Annual amortization applies.' },
+      {},
+      fakeDoubaoFetch,
+      cfgPath,
+    );
+    assert.equal(capturedUrl, 'http://127.0.0.1:3425/v1/responses');
+    assert.equal(capturedBody.model, 'doubao-translate/doubao-ai');
+    assert.equal(magpieResponsesResult.meaning_zh, '可扩展性');
+
+    const fakeMagpieChatFallbackFetch: typeof fetch = async (url, init) => {
+      capturedUrl = String(url);
+      capturedBody = JSON.parse(String(init?.body || '{}'));
+      if (capturedUrl.endsWith('/responses')) {
+        return new Response('Not Implemented', { status: 404 });
+      }
+      return new Response(
+        JSON.stringify({
+          choices: [{ message: { content: '摊销' } }],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    };
+
+    const magpieFallbackResult = await translateWordWithApi(
+      { surface: 'amortization', sentence: 'Annual amortization applies.' },
+      {},
+      fakeMagpieChatFallbackFetch,
+      cfgPath,
+    );
+    assert.equal(capturedUrl, 'http://127.0.0.1:3425/v1/chat/completions');
+    assert.deepEqual(capturedBody.messages, [{ role: 'user', content: 'amortization' }]);
+    assert.equal(magpieFallbackResult.meaning_zh, '摊销');
   } finally {
     fs.rmSync(path.dirname(cfgPath), { recursive: true, force: true });
   }

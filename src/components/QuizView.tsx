@@ -26,6 +26,7 @@ import type {
   VocabEntry,
 } from '../types/studyhub';
 import { gradeQuiz, type QuizGradeSummary } from '../lib/quizLogic';
+import { extractErrorMessage } from '../lib/errors';
 import type { WordClickPayload } from './InteractiveText';
 import { MarkdownContent } from './MarkdownContent';
 
@@ -143,7 +144,7 @@ export const QuizView: React.FC<QuizViewProps> = ({
         setSaveNotice(`results/${graded.filename}`);
       } catch (err) {
         setSaveNotice(
-          `结果保存失败：${err instanceof Error ? err.message : '未知错误'}`,
+          `结果保存失败：${extractErrorMessage(err, '未知错误')}`,
         );
       }
     },
@@ -221,7 +222,7 @@ export const QuizView: React.FC<QuizViewProps> = ({
       const parsed = JSON.parse(text) as QuizFile;
       await onImportQuiz(file.name, parsed);
     } catch (err) {
-      setImportError(err instanceof Error ? err.message : 'JSON 格式解析失败');
+      setImportError(extractErrorMessage(err, 'JSON 格式解析失败'));
     }
   };
 

@@ -30,6 +30,7 @@ import type {
   VocabStatus,
 } from './types/studyhub';
 import { studyhubApi } from './api/studyhubApi';
+import { extractErrorMessage } from './lib/errors';
 import { formatDateYmd, getDueReviewWords, normalizeWordKey } from './lib/vocabLogic';
 import type { WordClickPayload } from './components/InteractiveText';
 import {
@@ -137,7 +138,7 @@ export default function App() {
       setFolderStatus(statusRes);
       setTranslationStatus(tStatus);
     } catch (err) {
-      setLoadError(err instanceof Error ? err.message : '加载本地学习数据失败');
+      setLoadError(extractErrorMessage(err, '加载本地学习数据失败'));
     } finally {
       setLoading(false);
     }
@@ -324,7 +325,7 @@ export default function App() {
               ? {
                   ...prev,
                   translatingApi: false,
-                  apiError: err instanceof Error ? err.message : '调用翻译接口失败',
+                  apiError: extractErrorMessage(err, '调用翻译接口失败'),
                 }
               : null,
           );
@@ -413,7 +414,7 @@ export default function App() {
           ? {
               ...prev,
               translatingApi: false,
-              apiError: err instanceof Error ? err.message : '调用翻译接口失败',
+              apiError: extractErrorMessage(err, '调用翻译接口失败'),
             }
           : null,
       );
