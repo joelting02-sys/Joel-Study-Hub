@@ -11,9 +11,26 @@ use std::collections::{BTreeSet, HashMap};
 use std::fs;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::path::Path;
+use std::sync::OnceLock;
 use std::time::Duration;
 
 const REQUEST_TIMEOUT_SECS: u64 = 15;
+static SHARED_HTTP_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+
+fn shared_http_client() -> Result<&'static reqwest::Client, String> {
+    if let Some(client) = SHARED_HTTP_CLIENT.get() {
+        return Ok(client);
+    }
+    let built = reqwest::Client::builder()
+        .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
+        .pool_max_idle_per_host(4)
+        .build()
+        .map_err(|e| format!("初始化 HTTP 客户端失败: {e}"))?;
+    let _ = SHARED_HTTP_CLIENT.set(built);
+    SHARED_HTTP_CLIENT
+        .get()
+        .ok_or_else(|| "初始化 HTTP 客户端失败".to_string())
+}
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -405,10 +422,7 @@ pub async fn fetch_available_models(
     let normalized = normalize_base_url(&parsed);
     let models_url = build_api_url(&normalized, "models");
 
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
-        .build()
-        .map_err(|e| format!("初始化 HTTP 客户端失败: {e}"))?;
+    let client = shared_http_client()?;
 
     let mut req = client.get(&models_url).header("Accept", "application/json");
     if !api_key.is_empty() {
@@ -767,6 +781,31 @@ fn is_dedicated_translation_model(model: &str) -> bool {
         || lower.ends_with("/translate")
 }
 
+pub fn pick_fast_reasoning_effort(model: &str) -> Option<&'static str> {
+    let lower = model.trim().to_lowercase();
+    if lower.is_empty() || is_dedicated_translation_model(&lower) || lower.contains("hy4flash") {
+        return None;
+    }
+    if lower.contains("deepseek") && !lower.contains("-max") {
+        return Some("none");
+    }
+    if lower.contains("gpt-5") {
+        return Some("none");
+    }
+    if lower.contains("minimax")
+        || lower.contains("gemini")
+        || lower.contains("deepseek-v4.1-flash-max")
+        || lower.contains("claude")
+        || lower.contains("gpt-6")
+        || lower.starts_with("o1")
+        || lower.starts_with("o3")
+        || lower.starts_with("o4")
+    {
+        return Some("low");
+    }
+    None
+}
+
 pub async fn translate_word_with_api(
     config_path: &Path,
     data_dir: Option<&Path>,
@@ -810,10 +849,7 @@ pub async fn translate_word_with_api(
         }
     };
 
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
-        .build()
-        .map_err(|e| format!("初始化 HTTP 客户端失败: {e}"))?;
+    let client = shared_http_client()?;
 
     let dedicated_translator = is_dedicated_translation_model(&config.model);
 
@@ -854,55 +890,84 @@ pub async fn translate_word_with_api(
         }
     }
 
-    // 2. 标准 OpenAI 兼容 /chat/completions
-    // 若是专用翻译通道回退到 /chat/completions，仅发送纯单词/短语避免模型把提示词标签一并直译
+    // 2. 标准 OpenAI 兼容 /chat/completions（启用连接复用 + 精简词典提示词 + 自动关闭多余思维链）
     let chat_url = build_api_url(&config.base_url, "chat/completions");
-    let body = if dedicated_translator {
-        json!({
-            "model": config.model,
-            "messages": [
-                {
+    let reasoning_effort = if dedicated_translator {
+        None
+    } else {
+        pick_fast_reasoning_effort(&config.model)
+    };
+    let short_sentence: String = sentence.chars().take(240).collect();
+
+    let build_chat_body = |with_reasoning_control: bool| -> Value {
+        if dedicated_translator {
+            return json!({
+                "model": config.model,
+                "messages": [{
                     "role": "user",
                     "content": cleaned_word
-                }
-            ]
-        })
-    } else {
-        let mut lines = vec![format!("Word or phrase: {cleaned_word}")];
-        if !sentence.is_empty() {
-            lines.push(format!("Context sentence: {sentence}"));
+                }]
+            });
+        }
+        let mut user_parts = Vec::new();
+        if short_sentence.is_empty() {
+            user_parts.push(cleaned_word.clone());
+        } else {
+            user_parts.push(format!("{cleaned_word} | 句: {short_sentence}"));
         }
         if !subject.is_empty() {
-            lines.push(format!("Subject/Course: {subject}"));
+            user_parts.push(format!("课: {subject}"));
         }
-        json!({
-            "model": config.model,
-            "temperature": 0.1,
-            "messages": [
+        let mut obj = serde_json::Map::new();
+        obj.insert("model".to_string(), json!(config.model));
+        obj.insert("temperature".to_string(), json!(0.1));
+        obj.insert(
+            "messages".to_string(),
+            json!([
                 {
                     "role": "system",
-                    "content": "You are a helpful English-to-Chinese bilingual dictionary and study coach. Given an English word or phrase, its optional sentence context, and subject, respond with ONLY a valid JSON object containing: {\"word\":\"standard base form (lemma) or original phrase\",\"phonetic\":\"IPA without slashes, optional\",\"pos\":\"brief part of speech like n. / v. / adj. / phrase\",\"meaning_zh\":\"2-4 Chinese meanings covering both formal/academic context and everyday senses, separated by ；\",\"plain_zh\":\"1 concise plain-Chinese intuitive explanation so a learner immediately understands what it means in real life (e.g. for stakeholder: 跟企业或项目有利害关系的人，如股东、员工、客户)\",\"alternatives\":[\"2-4 different intuitive Chinese synonyms or everyday ways to say it, e.g. 股东, 利益方, 相关方, 干系人\"],\"synonyms\":[\"2-4 common English synonyms or close expressions\"]}. Do not include markdown code fences or extra commentary."
+                    "content": "英汉学习词典。只返回合法JSON：{\"word\":\"词原形\",\"phonetic\":\"音标(无斜杠)\",\"pos\":\"词性\",\"meaning_zh\":\"2-4个核心中文义项，；分隔\",\"plain_zh\":\"一句大白话通俗解释\",\"alternatives\":[\"2-3个直观中文说法\"],\"synonyms\":[\"2-3个英文同义词\"]}"
                 },
                 {
                     "role": "user",
-                    "content": lines.join("\n")
+                    "content": user_parts.join(" | ")
                 }
-            ]
-        })
+            ]),
+        );
+        if with_reasoning_control {
+            if let Some(effort) = reasoning_effort {
+                obj.insert("reasoning_effort".to_string(), json!(effort));
+                if effort == "none" {
+                    obj.insert("max_tokens".to_string(), json!(260));
+                }
+            }
+        }
+        Value::Object(obj)
     };
 
-    let mut req = client
-        .post(&chat_url)
-        .header("Content-Type", "application/json")
-        .json(&body);
-    if !config.api_key.is_empty() {
-        req = req.header("Authorization", format!("Bearer {}", config.api_key));
-    }
+    let send_chat = |body: Value| {
+        let mut req = client
+            .post(&chat_url)
+            .header("Content-Type", "application/json")
+            .json(&body);
+        if !config.api_key.is_empty() {
+            req = req.header("Authorization", format!("Bearer {}", config.api_key));
+        }
+        req.send()
+    };
 
-    let resp = req
-        .send()
+    let mut resp = send_chat(build_chat_body(true))
         .await
         .map_err(|e| format!("调用翻译接口失败: {e}"))?;
+
+    if !resp.status().is_success()
+        && reasoning_effort.is_some()
+        && matches!(resp.status().as_u16(), 400 | 422)
+    {
+        resp = send_chat(build_chat_body(false))
+            .await
+            .map_err(|e| format!("调用翻译接口失败: {e}"))?;
+    }
 
     let status_code = resp.status();
     let raw_text = resp
@@ -941,6 +1006,12 @@ mod tests {
         assert!(is_dedicated_translation_model("doubao-translate/volcengine-translate"));
         assert!(is_dedicated_translation_model("doubao-translate/microsoft-translator"));
         assert!(!is_dedicated_translation_model("auto/deepseek-v4.1-flash"));
+
+        assert_eq!(pick_fast_reasoning_effort("auto/deepseek-v4.1-flash"), Some("none"));
+        assert_eq!(pick_fast_reasoning_effort("workbuddy-ai/deepseek-v4.1-flash-sg"), Some("none"));
+        assert_eq!(pick_fast_reasoning_effort("auto/minimax-m3.1-flash"), Some("low"));
+        assert_eq!(pick_fast_reasoning_effort("auto/hy4flash-free"), None);
+        assert_eq!(pick_fast_reasoning_effort("doubao-translate/doubao-ai"), None);
     }
 
     #[test]

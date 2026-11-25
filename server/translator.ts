@@ -636,6 +636,32 @@ function isDedicatedTranslationModel(model: string): boolean {
   );
 }
 
+export function pickFastReasoningEffort(model: string): 'none' | 'low' | undefined {
+  const lower = model.trim().toLowerCase();
+  if (!lower || isDedicatedTranslationModel(lower) || lower.includes('hy4flash')) {
+    return undefined;
+  }
+  if (lower.includes('deepseek') && !lower.includes('-max')) {
+    return 'none';
+  }
+  if (lower.includes('gpt-5')) {
+    return 'none';
+  }
+  if (
+    lower.includes('minimax') ||
+    lower.includes('gemini') ||
+    lower.includes('deepseek-v4.1-flash-max') ||
+    lower.includes('claude') ||
+    lower.includes('gpt-6') ||
+    lower.startsWith('o1') ||
+    lower.startsWith('o3') ||
+    lower.startsWith('o4')
+  ) {
+    return 'low';
+  }
+  return undefined;
+}
+
 async function postJsonWithTimeout(
   url: string,
   headers: Record<string, string>,
@@ -743,38 +769,52 @@ export async function translateWordWithApi(
     }
   }
 
-  // 2. 标准 OpenAI 兼容 /chat/completions（专用翻译通道回退时仅发纯单词，通用大模型则附带词典 JSON 提示词）
+  // 2. 标准 OpenAI 兼容 /chat/completions（专用翻译通道回退时仅发纯单词，通用大模型则附带精简词典提示并关闭不必要的推理思考）
   const chatUrl = buildApiPathUrl(config.baseUrl, 'chat/completions');
-  const chatBody = dedicatedTranslator
-    ? {
+  const reasoningEffort = dedicatedTranslator ? undefined : pickFastReasoningEffort(config.model);
+  const shortSentence = sentence.slice(0, 240);
+
+  const buildChatPayload = (withReasoningControl: boolean): Record<string, unknown> => {
+    if (dedicatedTranslator) {
+      return {
         model: config.model,
         messages: [{ role: 'user', content: cleanedWord }],
+      };
+    }
+    const userPrompt = [
+      shortSentence ? `${cleanedWord} | 句: ${shortSentence}` : cleanedWord,
+      subject ? `课: ${subject}` : '',
+    ]
+      .filter(Boolean)
+      .join(' | ');
+    const payload: Record<string, unknown> = {
+      model: config.model,
+      temperature: 0.1,
+      messages: [
+        {
+          role: 'system',
+          content:
+            '英汉学习词典。只返回合法JSON：{"word":"词原形","phonetic":"音标(无斜杠)","pos":"词性","meaning_zh":"2-4个核心中文义项，；分隔","plain_zh":"一句大白话通俗解释","alternatives":["2-3个直观中文说法"],"synonyms":["2-3个英文同义词"]}',
+        },
+        {
+          role: 'user',
+          content: userPrompt,
+        },
+      ],
+    };
+    if (withReasoningControl && reasoningEffort) {
+      payload.reasoning_effort = reasoningEffort;
+      if (reasoningEffort === 'none') {
+        payload.max_tokens = 260;
       }
-    : (() => {
-        const userPromptLines = [`Word or phrase: ${cleanedWord}`];
-        if (sentence) userPromptLines.push(`Context sentence: ${sentence}`);
-        if (subject) userPromptLines.push(`Subject/Course: ${subject}`);
-        return {
-          model: config.model,
-          temperature: 0.1,
-          messages: [
-            {
-              role: 'system',
-              content:
-                'You are a helpful English-to-Chinese bilingual dictionary and study coach. ' +
-                'Given an English word or phrase, its optional sentence context, and subject, respond with ONLY a valid JSON object containing: ' +
-                '{"word":"standard base form (lemma) or original phrase","phonetic":"IPA without slashes, optional","pos":"brief part of speech like n. / v. / adj. / phrase","meaning_zh":"2-4 Chinese meanings covering both formal/academic context and everyday senses, separated by ；","plain_zh":"1 concise plain-Chinese intuitive explanation so a learner immediately understands what it means in real life (e.g. for stakeholder: 跟企业或项目有利害关系的人，如股东、员工、客户)","alternatives":["2-4 different intuitive Chinese synonyms or everyday ways to say it, e.g. 股东, 利益方, 相关方, 干系人"],"synonyms":["2-4 common English synonyms or close expressions"]}. ' +
-                'Do not include markdown code fences or extra commentary.',
-            },
-            {
-              role: 'user',
-              content: userPromptLines.join('\n'),
-            },
-          ],
-        };
-      })();
+    }
+    return payload;
+  };
 
-  const chatResp = await postJsonWithTimeout(chatUrl, headers, chatBody, fetchImpl);
+  let chatResp = await postJsonWithTimeout(chatUrl, headers, buildChatPayload(true), fetchImpl);
+  if (!chatResp.ok && reasoningEffort && (chatResp.status === 400 || chatResp.status === 422)) {
+    chatResp = await postJsonWithTimeout(chatUrl, headers, buildChatPayload(false), fetchImpl);
+  }
   if (!chatResp.ok) {
     const snippet = chatResp.rawText.slice(0, 240);
     throw new Error(`翻译接口返回 HTTP ${chatResp.status}${snippet ? `: ${snippet}` : ''}`);

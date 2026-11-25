@@ -264,7 +264,7 @@ export const WordLookupPopover: React.FC<WordLookupPopoverProps> = ({
 
       {!loading && result && (
         <div className="mt-3">
-          {translatingApi ? (
+          {translatingApi && !result.found ? (
             <div className="flex items-center gap-2 rounded-lg border border-blue-100 bg-blue-50/70 px-3 py-2.5 text-sm text-blue-700 dark:border-blue-900/60 dark:bg-blue-950/40 dark:text-blue-300">
               <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
               <span>正在调用翻译模型接口…</span>
@@ -274,6 +274,13 @@ export const WordLookupPopover: React.FC<WordLookupPopoverProps> = ({
               <p className="text-base leading-relaxed font-medium text-slate-800 dark:text-slate-100">
                 {result.meaning_zh}
               </p>
+
+              {translatingApi && (
+                <div className="flex items-center gap-1.5 text-xs text-blue-600 dark:text-blue-400">
+                  <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
+                  <span>正在补充通俗说法与同义词…</span>
+                </div>
+              )}
 
               {result.glossaryNote && (
                 <p className="text-xs text-slate-500 dark:text-slate-400">

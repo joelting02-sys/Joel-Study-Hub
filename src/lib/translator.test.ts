@@ -345,3 +345,48 @@ test('parseModelTranslationPayload extracts plain_zh, alternatives, and synonyms
   assert.deepEqual(rich.alternatives, ['股东', '利益方']);
   assert.deepEqual(rich.synonyms, ['shareholder', 'interested party']);
 });
+
+test('pickFastReasoningEffort disables reasoning for DeepSeek Flash and retries on 400 fallback', async () => {
+  const { pickFastReasoningEffort } = await import('../../server/translator.ts');
+  assert.equal(pickFastReasoningEffort('auto/deepseek-v4.1-flash'), 'none');
+  assert.equal(pickFastReasoningEffort('workbuddy-ai/deepseek-v4.1-flash-sg'), 'none');
+  assert.equal(pickFastReasoningEffort('auto/minimax-m3.1-flash'), 'low');
+  assert.equal(pickFastReasoningEffort('auto/hy4flash-free'), undefined);
+  assert.equal(pickFastReasoningEffort('doubao-translate/doubao-ai'), undefined);
+
+  const cfgPath = makeTempConfigPath('reasoning-fallback');
+  try {
+    const attempts: Array<Record<string, unknown>> = [];
+    const fallbackFetch: typeof fetch = async (_url, init) => {
+      const body = JSON.parse(String(init?.body || '{}')) as Record<string, unknown>;
+      attempts.push(body);
+      if (attempts.length === 1) {
+        return new Response('Unknown parameter: reasoning_effort', { status: 400 });
+      }
+      return new Response(
+        JSON.stringify({
+          choices: [{ message: { content: '{"word":"stakeholder","meaning_zh":"利益相关者；股东"}' } }],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    };
+
+    const res = await translateWordWithApi(
+      { surface: 'stakeholder', subject: 'Business' },
+      {
+        TRANSLATE_API_BASE_URL: 'http://127.0.0.1:3425/v1',
+        TRANSLATE_API_KEY: 'sk-test',
+        TRANSLATE_API_MODEL: 'auto/deepseek-v4.1-flash',
+      },
+      fallbackFetch,
+      cfgPath,
+    );
+    assert.equal(attempts.length, 2);
+    assert.equal(attempts[0].reasoning_effort, 'none');
+    assert.equal(attempts[0].max_tokens, 260);
+    assert.equal('reasoning_effort' in attempts[1], false);
+    assert.equal(res.meaning_zh, '利益相关者；股东');
+  } finally {
+    fs.rmSync(path.dirname(cfgPath), { recursive: true, force: true });
+  }
+});

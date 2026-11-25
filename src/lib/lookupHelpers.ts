@@ -26,17 +26,21 @@ export function isDedicatedTranslationModel(model: string): boolean {
 export function pickPreferredChatModel(models: string[]): string | undefined {
   const chatModels = models.filter((m) => !isDedicatedTranslationModel(m));
   if (chatModels.length === 0) return undefined;
+  // 按实测延迟排序：优先选择支持关闭思维链的低延迟 Flash 对话模型，避免默认 high 推理模型（如 hy4flash-free）耗时过长
   const preferredOrder = [
-    'auto/hy4flash-free',
     'auto/deepseek-v4.1-flash',
+    'workbuddy-ai/deepseek-v4.1-flash-sg',
+    'workbuddy/deepseek-v4.1-flash',
     'auto/minimax-m3.1-flash',
-    'ai-studio/gemini-4-hydrogen',
+    'raccoon/sn-sensenova-6-8-flash-lite',
+    'raccoon/sn-sensenova-6-8-flash',
   ];
   for (const cand of preferredOrder) {
     const hit = chatModels.find((m) => m.toLowerCase() === cand);
     if (hit) return hit;
   }
-  return chatModels[0];
+  const nonSlowFallback = chatModels.find((m) => !m.toLowerCase().includes('hy4flash'));
+  return nonSlowFallback || chatModels[0];
 }
 
 /**

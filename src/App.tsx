@@ -103,6 +103,7 @@ export default function App() {
   const lookupSeqRef = useRef(0);
   const hoverCloseTimerRef = useRef<number | null>(null);
   const recentHoverCountsRef = useRef<Map<string, number>>(new Map());
+  const apiTranslateCacheRef = useRef<Map<string, LookupResult>>(new Map());
 
   const cancelHoverClose = useCallback(() => {
     if (hoverCloseTimerRef.current !== null) {
@@ -294,6 +295,23 @@ export default function App() {
       }
 
       const apiConfigured = Boolean(translationStatus?.configured);
+      const cacheKey = `${translationStatus?.model || ''}|${(payload.matchedGlossaryKey || payload.surface).trim().toLowerCase()}|${payload.sentence.trim()}`;
+      const cachedApi = apiConfigured ? apiTranslateCacheRef.current.get(cacheKey) : undefined;
+      if (cachedApi && (preferences.translationMode === 'always_api' || (preferences.translationMode === 'auto_fallback' && !result.found))) {
+        const mergedCached = mergeLookupEnrichment(result, cachedApi);
+        setActiveLookup((prev) =>
+          prev
+            ? {
+                ...prev,
+                loading: false,
+                translatingApi: false,
+                result: mergedCached,
+              }
+            : null,
+        );
+        return;
+      }
+
       const shouldCallApi =
         apiConfigured &&
         (preferences.translationMode === 'always_api' ||
@@ -321,6 +339,11 @@ export default function App() {
             subject: payload.subject,
           });
           if (lookupSeqRef.current !== seq) return;
+          if (apiTranslateCacheRef.current.size >= 300) {
+            const firstKey = apiTranslateCacheRef.current.keys().next().value;
+            if (firstKey) apiTranslateCacheRef.current.delete(firstKey);
+          }
+          apiTranslateCacheRef.current.set(cacheKey, rawApiResult);
           const apiResult = mergeLookupEnrichment(result, rawApiResult);
           finalResult = apiResult;
 
@@ -402,6 +425,7 @@ export default function App() {
       cancelHoverClose,
       vocabLookupMap,
       translationStatus?.configured,
+      translationStatus?.model,
       preferences.translationMode,
       preferences.autoAddTranslatedVocab,
     ],
@@ -423,6 +447,8 @@ export default function App() {
         subject: activeLookup.subject,
       });
       if (lookupSeqRef.current !== seq) return;
+      const cacheKey = `${translationStatus?.model || ''}|${targetSurface.trim().toLowerCase()}|${activeLookup.sentence.trim()}`;
+      apiTranslateCacheRef.current.set(cacheKey, rawApiResult);
       const apiResult = mergeLookupEnrichment(baseResult, rawApiResult);
 
       let autoSaved = false;
@@ -469,7 +495,7 @@ export default function App() {
           : null,
       );
     }
-  }, [activeLookup, vocabLookupMap, preferences.autoAddTranslatedVocab]);
+  }, [activeLookup, vocabLookupMap, translationStatus?.model, preferences.autoAddTranslatedVocab]);
 
   // 供单词库快速查词与单条重译复用
   const handleLookupAndTranslate = useCallback(

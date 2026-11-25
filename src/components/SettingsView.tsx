@@ -345,7 +345,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               软件更新
             </h2>
             <span className="font-mono text-xs text-slate-500 dark:text-slate-400">
-              当前版本 v{updateState?.currentVersion || '1.0.7'}
+              当前版本 v{updateState?.currentVersion || '1.0.8'}
             </span>
           </div>
 
@@ -731,7 +731,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             {isDedicatedTranslationModel(modelInput) && (
               <div className="rounded-lg border border-amber-200 bg-amber-50/70 px-3 py-2 text-xs leading-relaxed text-amber-800 dark:border-amber-800/60 dark:bg-amber-950/30 dark:text-amber-300">
                 <p>
-                  提示：「<span className="font-mono">{modelInput}</span>」属于纯直译通道，每次仅输出单个固定译文（如 stakeholder → 利益相关者）。如果要像 Trae 对话模型那样同时显示<strong>多种说法、大白话解释（如「股东」）和英文同义词</strong>，请改选通用对话模型（如 <span className="font-mono">auto/hy4flash-free</span> 或 <span className="font-mono">auto/deepseek-v4.1-flash</span>）。
+                  提示：「<span className="font-mono">{modelInput}</span>」属于纯直译通道，每次仅输出单个固定译文（如 stakeholder → 利益相关者）。如果要像 Trae 对话模型那样同时显示<strong>多种说法、大白话解释（如「股东」）和英文同义词</strong>，请改选快速对话模型（如 <span className="font-mono">auto/deepseek-v4.1-flash</span>，约 1.5 秒响应；不建议默认用强制深度思考的 <span className="font-mono">auto/hy4flash-free</span>）。
                 </p>
                 {(() => {
                   const suggested = pickPreferredChatModel(detectedModels);
