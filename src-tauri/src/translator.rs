@@ -516,6 +516,25 @@ fn pick_str(map: &serde_json::Map<String, Value>, keys: &[&str]) -> String {
     String::new()
 }
 
+fn push_unique_str(
+    out: &mut Vec<String>,
+    raw: &str,
+    excluded: &[String],
+    limit: usize,
+) {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return;
+    }
+    let lower = trimmed.to_lowercase();
+    if excluded.iter().any(|e| e == &lower) {
+        return;
+    }
+    if !out.iter().any(|existing| existing.to_lowercase() == lower) && out.len() < limit {
+        out.push(trimmed.to_string());
+    }
+}
+
 fn pick_str_list(
     map: &serde_json::Map<String, Value>,
     keys: &[&str],
@@ -528,26 +547,13 @@ fn pick_str_list(
         .filter(|v| !v.is_empty())
         .collect();
     let mut out: Vec<String> = Vec::new();
-    let mut push_item = |raw: &str| {
-        let trimmed = raw.trim();
-        if trimmed.is_empty() {
-            return;
-        }
-        let lower = trimmed.to_lowercase();
-        if excluded.iter().any(|e| e == &lower) {
-            return;
-        }
-        if !out.iter().any(|existing| existing.to_lowercase() == lower) && out.len() < limit {
-            out.push(trimmed.to_string());
-        }
-    };
 
     for k in keys {
         if let Some(val) = map.get(*k) {
             if let Some(arr) = val.as_array() {
                 for item in arr {
                     if let Some(s) = item.as_str() {
-                        push_item(s);
+                        push_unique_str(&mut out, s, &excluded, limit);
                     }
                 }
                 if !out.is_empty() {
@@ -555,7 +561,7 @@ fn pick_str_list(
                 }
             } else if let Some(s) = val.as_str() {
                 for part in s.split(|c: char| matches!(c, '；' | ';' | '，' | ',')) {
-                    push_item(part);
+                    push_unique_str(&mut out, part, &excluded, limit);
                 }
                 if !out.is_empty() {
                     return out;
