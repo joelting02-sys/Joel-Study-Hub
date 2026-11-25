@@ -354,9 +354,31 @@ export const QuizView: React.FC<QuizViewProps> = ({
                       <span className="font-medium">你的选择：</span>
                       {chosenIndex >= 0 ? (
                         <div className="flex items-baseline gap-1.5">
-                          <span className="font-mono font-semibold">{OPTION_LETTERS[chosenIndex]}.</span>
+                          <span className="shrink-0 font-mono font-semibold">{OPTION_LETTERS[chosenIndex]}.</span>
+                          <div className="min-w-0 flex-1">
+                            <MarkdownContent
+                              text={question.options[chosenIndex]}
+                              interactive
+                              compact
+                              glossary={activeQuiz.glossary}
+                              source={`${activeQuiz.title} · Q${index + 1}`}
+                              subject={activeQuiz.subject}
+                              vocabLookupMap={vocabLookupMap}
+                              onWordClick={handleQuizWordClick}
+                            />
+                          </div>
+                        </div>
+                      ) : (
+                        <span>已跳过</span>
+                      )}
+                    </div>
+                    <div className="space-y-1 font-medium text-emerald-700 dark:text-emerald-400">
+                      <span>正确答案：</span>
+                      <div className="flex items-baseline gap-1.5">
+                        <span className="shrink-0 font-mono font-semibold">{OPTION_LETTERS[question.correct_index]}.</span>
+                        <div className="min-w-0 flex-1">
                           <MarkdownContent
-                            text={question.options[chosenIndex]}
+                            text={question.options[question.correct_index]}
                             interactive
                             compact
                             glossary={activeQuiz.glossary}
@@ -366,24 +388,6 @@ export const QuizView: React.FC<QuizViewProps> = ({
                             onWordClick={handleQuizWordClick}
                           />
                         </div>
-                      ) : (
-                        <span>已跳过</span>
-                      )}
-                    </div>
-                    <div className="space-y-1 font-medium text-emerald-700 dark:text-emerald-400">
-                      <span>正确答案：</span>
-                      <div className="flex items-baseline gap-1.5">
-                        <span className="font-mono font-semibold">{OPTION_LETTERS[question.correct_index]}.</span>
-                        <MarkdownContent
-                          text={question.options[question.correct_index]}
-                          interactive
-                          compact
-                          glossary={activeQuiz.glossary}
-                          source={`${activeQuiz.title} · Q${index + 1}`}
-                          subject={activeQuiz.subject}
-                          vocabLookupMap={vocabLookupMap}
-                          onWordClick={handleQuizWordClick}
-                        />
                       </div>
                     </div>
                   </div>

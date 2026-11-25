@@ -70,7 +70,46 @@ Write UTF-8 JSON with the following structure:
 - `glossary`: Optional key-value map of domain phrases (lowercase recommended). Click-to-translate prioritizes `glossary` with **longest-phrase match first**.
 - `questions[].type`: Only `"multiple_choice"` (4 options) or `"true_false"` (`["True", "False"]`).
 - `questions[].correct_index`: 0-based integer index into `options`.
-- **Markdown Formatting (`stem`, `options`, `hint`, `explanation_zh`)**: StudyHub renders standard Markdown cleanly (headings, `**bold**`, `*italic*`, `` `inline code` ``, fenced code blocks, tables, blockquotes, bullet lists, and numbered lists). Always put each numbered item on its own line (`1. ...\n2. ...\n3. ...\n4. ...`) with a blank line before/after lists when appropriate so questions and explanations stay neatly aligned.
+
+### Question Formatting & Markdown Rules (Important — Strictly Follow)
+StudyHub renders `stem`, `options`, `hint`, and `explanation_zh` using a native Markdown AST renderer. Do **not** pack multi-step or multi-item text onto a single line, and do **not** leave raw unclosed symbols exposed:
+
+1. **Multi-Step & Numbered List Line Breaks（步骤与编号必须逐行换行）**:
+   - Whenever a `stem`, `option`, `hint`, or `explanation_zh` contains multiple steps or numbered points (`Step 1` / `步骤 1` / `1.` / `2.` / `3.` / `4.`), **NEVER** string them together in one sentence or separate them inline with semicolons (`;`).
+   - Always put **each step or item on its own line** (`\n`):
+     ```markdown
+     1. Define the objective
+     2. Collect primary and secondary data
+     3. Analyse and interpret findings
+     4. Draw conclusions and act
+     ```
+     or:
+     ```markdown
+     步骤 1：明确调研目标
+     步骤 2：收集一手与二手数据
+     步骤 3：分析并解读结果
+     步骤 4：得出结论并采取行动
+     ```
+
+2. **Sub-Items Inside Options (`A / B / C` 选项内分项也必须逐行换行)**:
+   - If a single option contains sub-items such as `A / B / C`, `Pros / Cons`, `Price / Quality / Timing`, or paired concepts, **NEVER** squeeze them into one run-on sentence.
+   - Format each sub-item on its own line with clean Markdown:
+     ```markdown
+     A. First sub-item
+     B. Second sub-item
+     C. Third sub-item
+     ```
+     or:
+     ```markdown
+     - **Price**: Show long-term cost savings
+     - **Quality**: Provide samples and client references
+     - **Timing**: Confirm expected decision date politely
+     ```
+
+3. **Clean Standard Markdown Only（纯正 Markdown 显示，禁止裸露符号）**:
+   - Use standard Markdown syntax: `**bold**`, `*italic*`, `` `inline code` ``, `- ` bullet lists, `1. ` numbered lists, `> ` blockquotes, tables, and fenced code blocks.
+   - **NEVER** emit decorative raw stars (`***`, `******`), raw `•` bullets, `1)` without newlines, unspaced headings/lists (`###Title`, `-item`), or unclosed `**`.
+   - When providing bilingual English + Chinese content, separate the English block and Chinese block cleanly onto separate lines (e.g. `<English>\n【中文】<Chinese>`). StudyHub automatically renders `【中文】` / `【中文提示】` as a clean visual divider badge.
 
 ---
 

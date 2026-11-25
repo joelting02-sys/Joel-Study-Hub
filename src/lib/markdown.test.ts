@@ -97,3 +97,41 @@ test('isSafeExternalUrl blocks javascript: and data: links while allowing https:
     assert.equal(links[0].href, 'https://example.com');
   }
 });
+
+test('normalizeStudyMarkdown splits Step/步骤 sequences, A/B/C sub-items, and 【中文】 blocks cleanly', () => {
+  const stepsText = '步骤 1：明确目标；步骤 2：收集数据；步骤 3：分析解读；步骤 4：采取行动';
+  const stepBlocks = parseStudyMarkdown(stepsText);
+  assert.equal(stepBlocks.length, 1);
+  assert.equal(stepBlocks[0].type, 'ordered_list');
+  if (stepBlocks[0].type === 'ordered_list') {
+    assert.equal(stepBlocks[0].items.length, 4);
+    assert.equal(stepBlocks[0].items[0].marker, '步骤 1：');
+    assert.equal(stepBlocks[0].items[0].plainText, '明确目标');
+    assert.equal(stepBlocks[0].items[3].plainText, '采取行动');
+  }
+
+  const abcOption =
+    'A. First step; B. Second step; C. Third step\n【中文】A. 第一步；B. 第二步；C. 第三步';
+  const abcBlocks = parseStudyMarkdown(abcOption);
+  assert.equal(abcBlocks[0].type, 'ordered_list');
+  assert.equal(abcBlocks[1].type, 'zh_label');
+  assert.equal(abcBlocks[2].type, 'ordered_list');
+  if (abcBlocks[0].type === 'ordered_list' && abcBlocks[2].type === 'ordered_list') {
+    assert.equal(abcBlocks[0].items.length, 3);
+    assert.equal(abcBlocks[0].items[0].plainText, 'First step');
+    assert.equal(abcBlocks[2].items.length, 3);
+    assert.equal(abcBlocks[2].items[1].plainText, '第二步');
+  }
+});
+
+test('parseStudyMarkdown handles bold-italic ***text***, _italic_ without breaking snake_case, and escaped symbols', () => {
+  const blocks = parseStudyMarkdown('Use ***key_term*** and _focus_ without breaking snake_case or \\*literal\\*.');
+  assert.equal(blocks[0].type, 'paragraph');
+  if (blocks[0].type === 'paragraph') {
+    const inlines = blocks[0].lines[0].inlines;
+    assert.equal(inlines.some((n) => n.type === 'strong'), true);
+    assert.equal(inlines.some((n) => n.type === 'em'), true);
+    assert.match(blocks[0].lines[0].plainText, /snake_case/);
+    assert.match(blocks[0].lines[0].plainText, /\*literal\*/);
+  }
+});

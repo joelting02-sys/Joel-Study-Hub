@@ -159,26 +159,33 @@ function renderBlocks(
       case 'ordered_list':
         return (
           <ol key={idx} className={`${listGap} pl-0.5`}>
-            {block.items.map((item, itemIdx) => (
-              <li key={itemIdx} className="flex items-baseline gap-2.5">
-                <span className="min-w-[1.6rem] shrink-0 text-right font-mono text-[0.9em] font-semibold tabular-nums text-blue-600 dark:text-blue-400">
-                  {item.marker}
-                </span>
-                <div className="min-w-0 flex-1 space-y-1.5">
-                  <div>
-                    {renderInlines(item.inlines, {
-                      ...baseCtx,
-                      blockPlainText: item.plainText,
-                    })}
-                  </div>
-                  {item.children && item.children.length > 0 && (
-                    <div className="space-y-1.5 pl-1">
-                      {renderBlocks(item.children, baseCtx, true)}
+            {block.items.map((item, itemIdx) => {
+              const isWideMarker = item.marker.length > 4;
+              return (
+                <li key={itemIdx} className="flex items-baseline gap-2.5">
+                  <span
+                    className={`shrink-0 font-mono text-[0.9em] font-semibold tabular-nums text-blue-600 dark:text-blue-400 ${
+                      isWideMarker ? 'whitespace-nowrap' : 'min-w-[1.6rem] text-right'
+                    }`}
+                  >
+                    {item.marker}
+                  </span>
+                  <div className="min-w-0 flex-1 space-y-1.5">
+                    <div>
+                      {renderInlines(item.inlines, {
+                        ...baseCtx,
+                        blockPlainText: item.plainText,
+                      })}
                     </div>
-                  )}
-                </div>
-              </li>
-            ))}
+                    {item.children && item.children.length > 0 && (
+                      <div className="space-y-1.5 pl-1">
+                        {renderBlocks(item.children, baseCtx, true)}
+                      </div>
+                    )}
+                  </div>
+                </li>
+              );
+            })}
           </ol>
         );
 
@@ -277,6 +284,18 @@ function renderBlocks(
                 ))}
               </tbody>
             </table>
+          </div>
+        );
+
+      case 'zh_label':
+        return (
+          <div
+            key={idx}
+            className="flex items-center gap-2 border-t border-slate-200/80 pt-2 text-[11px] font-semibold tracking-wide text-slate-500 dark:border-slate-700/70 dark:text-slate-400"
+          >
+            <span className="rounded bg-slate-100 px-1.5 py-0.5 text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+              {block.label}
+            </span>
           </div>
         );
 
