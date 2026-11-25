@@ -319,7 +319,7 @@ export const studyhubApi = {
   async getUpdateState(): Promise<AppUpdateState> {
     if (isTauriDesktop()) return invoke<AppUpdateState>('get_update_state');
     return {
-      currentVersion: '1.0.4',
+      currentVersion: '1.0.5',
       isPackaged: false,
       isPortable: false,
       supported: false,

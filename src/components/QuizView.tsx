@@ -7,12 +7,11 @@
  * - 支持 Hint、Skip、进度条、即时解析、错题总结，并自动写入 results/<quiz_id>_<时间>.json
  */
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ArrowLeft,
   ArrowRight,
   CheckCircle2,
-  FileUp,
   HelpCircle,
   RotateCcw,
   SkipForward,
@@ -37,7 +36,6 @@ interface QuizViewProps {
   fontScale: FontScale;
   isPopoverOpen: boolean;
   onWordClick: (payload: WordClickPayload) => void;
-  onImportQuiz: (filename: string, quiz: QuizFile) => Promise<void>;
   onSaveResult: (filename: string, result: QuizResultFile) => Promise<void>;
 }
 
@@ -56,7 +54,6 @@ export const QuizView: React.FC<QuizViewProps> = ({
   fontScale,
   isPopoverOpen,
   onWordClick,
-  onImportQuiz,
   onSaveResult,
 }) => {
   const [subjectFilter, setSubjectFilter] = useState<'ALL' | SubjectCode>('ALL');
@@ -69,9 +66,6 @@ export const QuizView: React.FC<QuizViewProps> = ({
   const [lookedUpWords, setLookedUpWords] = useState<string[]>([]);
   const [gradeSummary, setGradeSummary] = useState<QuizGradeSummary | null>(null);
   const [saveNotice, setSaveNotice] = useState<string>('');
-  const [importError, setImportError] = useState<string>('');
-
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const availableSubjects = useMemo(() => {
     const seen = new Set<string>();
@@ -211,20 +205,6 @@ export const QuizView: React.FC<QuizViewProps> = ({
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [activeQuiz, gradeSummary, currentQuestion, isAnswered, isPopoverOpen, selectAnswer, handleNext]);
-
-  const handleImportFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    e.target.value = '';
-    if (!file) return;
-    setImportError('');
-    try {
-      const text = await file.text();
-      const parsed = JSON.parse(text) as QuizFile;
-      await onImportQuiz(file.name, parsed);
-    } catch (err) {
-      setImportError(extractErrorMessage(err, 'JSON 格式解析失败'));
-    }
-  };
 
   // ==================== 视图 1：测验成绩报告 ====================
   if (activeQuiz && gradeSummary) {
@@ -676,43 +656,14 @@ export const QuizView: React.FC<QuizViewProps> = ({
   // ==================== 视图 3：测验列表 ====================
   return (
     <div className="mx-auto max-w-5xl space-y-6">
-      <div className="flex flex-wrap items-end justify-between gap-4 border-b border-slate-200 pb-5 dark:border-slate-800">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-slate-50">
-            测验模式
-          </h1>
-          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-            自动监听本地 quizzes/ 文件夹，AI 私教放入新测验 JSON 后会立即显示在此列表
-          </p>
-        </div>
-
-        <div className="flex items-center gap-2">
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".json,application/json"
-            className="hidden"
-            onChange={(e) => void handleImportFile(e)}
-          />
-          <button
-            type="button"
-            onClick={() => fileInputRef.current?.click()}
-            className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50 whitespace-nowrap dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
-          >
-            <FileUp className="h-4 w-4" />
-            <span>导入测验 JSON</span>
-          </button>
-        </div>
+      <div className="border-b border-slate-200 pb-5 dark:border-slate-800">
+        <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-slate-50">
+          测验模式
+        </h1>
+        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+          自动监听本地 quizzes/ 文件夹，AI 私教放入新测验 JSON 后会立即显示在此列表
+        </p>
       </div>
-
-      {importError && (
-        <div
-          role="alert"
-          className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-800 dark:bg-red-950/40 dark:text-red-300"
-        >
-          {importError}
-        </div>
-      )}
 
       {/* 科目筛选分段按钮（仅当本地 Agent 写入测验后按实际科目动态显示） */}
       {availableSubjects.length > 0 && (

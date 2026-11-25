@@ -9,7 +9,6 @@
 import React, { useMemo, useState } from 'react';
 import {
   Check,
-  Download,
   Languages,
   Loader2,
   Pencil,
@@ -54,7 +53,6 @@ interface VocabViewProps {
     patch: { meaning_zh?: string; status?: VocabStatus; subject?: string },
   ) => Promise<void>;
   onDeleteWord: (id: string) => Promise<void>;
-  onExportMarkdown: () => Promise<{ markdown: string; path: string }>;
 }
 
 /**
@@ -136,7 +134,6 @@ export const VocabView: React.FC<VocabViewProps> = ({
   onAddVocab,
   onUpdateWord,
   onDeleteWord,
-  onExportMarkdown,
 }) => {
   const [activeTab, setActiveTab] = useState<VocabStatus>('learning');
   const [subject, setSubject] = useState<'ALL' | SubjectCode>('ALL');
@@ -146,7 +143,6 @@ export const VocabView: React.FC<VocabViewProps> = ({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingMeaning, setEditingMeaning] = useState('');
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
-  const [exportNotice, setExportNotice] = useState<string>('');
   const [translatingRowId, setTranslatingRowId] = useState<string | null>(null);
   const [rowError, setRowError] = useState<string>('');
 
@@ -278,38 +274,15 @@ export const VocabView: React.FC<VocabViewProps> = ({
     }
   };
 
-  const handleDownloadMd = async () => {
-    const res = await onExportMarkdown();
-    setExportNotice(`已同步导出到 ${res.path}`);
-    const blob = new Blob([res.markdown], { type: 'text/markdown;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = '单词库.md';
-    a.click();
-    URL.revokeObjectURL(url);
-  };
-
   return (
     <div className="mx-auto max-w-6xl space-y-6">
-      <div className="flex flex-wrap items-end justify-between gap-4 border-b border-slate-200 pb-5 dark:border-slate-800">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-slate-50">
-            单词库
-          </h1>
-          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-            点击任意英文单词或原句词即可调用词典 / 翻译接口查义，修改实时写入 vocab.json 并同步导出 exports/单词库.md
-          </p>
-        </div>
-
-        <button
-          type="button"
-          onClick={() => void handleDownloadMd()}
-          className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50 whitespace-nowrap dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
-        >
-          <Download className="h-4 w-4" />
-          <span>导出 单词库.md</span>
-        </button>
+      <div className="border-b border-slate-200 pb-5 dark:border-slate-800">
+        <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-slate-50">
+          单词库
+        </h1>
+        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+          点击任意英文单词或原句词即可调用词典 / 翻译接口查义，修改实时写入 vocab.json
+        </p>
       </div>
 
       {/* 快速查词 / 翻译模型一键入库 */}
@@ -435,20 +408,6 @@ export const VocabView: React.FC<VocabViewProps> = ({
           </p>
         )}
       </section>
-
-      {exportNotice && (
-        <div className="flex items-center justify-between rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm text-emerald-800 dark:border-emerald-800/70 dark:bg-emerald-950/40 dark:text-emerald-300">
-          <span className="truncate">{exportNotice}</span>
-          <button
-            type="button"
-            onClick={() => setExportNotice('')}
-            aria-label="关闭导出提示"
-            className="ml-3 shrink-0 text-emerald-700 hover:text-emerald-900 dark:text-emerald-300"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-      )}
 
       {rowError && (
         <div

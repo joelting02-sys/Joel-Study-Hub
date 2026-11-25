@@ -476,12 +476,6 @@ export default function App() {
     void studyhubApi.getStatus().then(setFolderStatus);
   }, []);
 
-  const handleImportQuiz = useCallback(async (filename: string, quiz: QuizFile) => {
-    const res = await studyhubApi.importQuiz(filename, quiz);
-    setQuizzes(res.quizzes);
-    void studyhubApi.getStatus().then(setFolderStatus);
-  }, []);
-
   const handleSaveResult = useCallback(async (filename: string, result: QuizResultFile) => {
     await studyhubApi.saveResult(filename, result);
     const list = await studyhubApi.getResults();
@@ -708,7 +702,6 @@ export default function App() {
                 fontScale={preferences.fontScale}
                 isPopoverOpen={Boolean(activeLookup)}
                 onWordClick={(p) => void handleWordClick(p)}
-                onImportQuiz={handleImportQuiz}
                 onSaveResult={handleSaveResult}
               />
             )}
@@ -723,7 +716,6 @@ export default function App() {
                 onAddVocab={handleAddVocab}
                 onUpdateWord={handleUpdateWord}
                 onDeleteWord={handleDeleteWord}
-                onExportMarkdown={() => studyhubApi.exportMarkdown()}
               />
             )}
 
