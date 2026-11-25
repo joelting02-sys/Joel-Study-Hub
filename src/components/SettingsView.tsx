@@ -42,6 +42,7 @@ import type {
   SaveTranslationConfigInput,
   TranslationApiStatus,
   TranslationMode,
+  WordLookupTrigger,
 } from '../types/studyhub';
 import { extractErrorMessage } from '../lib/errors';
 
@@ -350,7 +351,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               软件更新
             </h2>
             <span className="font-mono text-xs text-slate-500 dark:text-slate-400">
-              当前版本 v{updateState?.currentVersion || '1.0.5'}
+              当前版本 v{updateState?.currentVersion || '1.0.6'}
             </span>
           </div>
 
@@ -508,6 +509,36 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 onClick={() => onUpdatePreferences({ fontScale: scale })}
                 className={`rounded-md px-3.5 py-1.5 text-sm font-medium transition-colors whitespace-nowrap ${
                   preferences.fontScale === scale
+                    ? 'bg-white text-slate-900 shadow-xs dark:bg-slate-900 dark:text-slate-50'
+                    : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="flex flex-col gap-5 border-t border-slate-100 pt-5 sm:flex-row sm:items-center sm:justify-between dark:border-slate-800">
+          <div>
+            <p className="text-sm font-medium text-slate-800 dark:text-slate-200">查词触发方式</p>
+            <p className="text-xs text-slate-500 dark:text-slate-400">
+              设置鼠标指到英文单词时自动显示翻译，还是需要点击单词后再显示
+            </p>
+          </div>
+          <div className="flex items-center gap-1 rounded-lg bg-slate-100 p-1 w-fit dark:bg-slate-800">
+            {(
+              [
+                ['hover', '指到自动翻译'],
+                ['click', '仅点击显示'],
+              ] as Array<[WordLookupTrigger, string]>
+            ).map(([mode, label]) => (
+              <button
+                key={mode}
+                type="button"
+                onClick={() => onUpdatePreferences({ wordLookupTrigger: mode })}
+                className={`rounded-md px-3.5 py-1.5 text-sm font-medium transition-colors whitespace-nowrap ${
+                  preferences.wordLookupTrigger === mode
                     ? 'bg-white text-slate-900 shadow-xs dark:bg-slate-900 dark:text-slate-50'
                     : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100'
                 }`}

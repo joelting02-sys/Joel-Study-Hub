@@ -26,7 +26,7 @@ import type {
 } from '../types/studyhub';
 import { filterAndSortVocab } from '../lib/vocabLogic';
 import { extractErrorMessage } from '../lib/errors';
-import { InteractiveText, type WordClickPayload } from './InteractiveText';
+import { InteractiveText, StudyWordButton, type WordClickPayload } from './InteractiveText';
 
 interface VocabViewProps {
   words: VocabEntry[];
@@ -281,7 +281,7 @@ export const VocabView: React.FC<VocabViewProps> = ({
           单词库
         </h1>
         <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-          点击任意英文单词或原句词即可调用词典 / 翻译接口查义，修改实时写入 vocab.json
+          鼠标指到或点击任意英文单词或原句词即可调用词典 / 翻译接口查义，修改实时写入 vocab.json
         </p>
       </div>
 
@@ -530,26 +530,23 @@ export const VocabView: React.FC<VocabViewProps> = ({
                 className="flex flex-col gap-3 p-5 lg:flex-row lg:items-start lg:justify-between"
               >
                 <div className="min-w-0 flex-1 space-y-2">
-                  {/* 单词（可点击弹出翻译卡片） + 音标 + 词性 */}
+                  {/* 单词（支持悬停或点击弹出翻译卡片） + 音标 + 词性 */}
                   <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-                    <button
-                      type="button"
-                      data-study-word={item.word}
-                      aria-label={`点击翻译单词 ${item.word}`}
-                      onClick={(e) => {
-                        e.stopPropagation();
+                    <StudyWordButton
+                      word={item.word}
+                      dataStudyWord={item.word}
+                      className="study-word cursor-pointer text-left text-lg font-bold text-slate-900 dark:text-slate-50"
+                      onTrigger={(rect, trigger) =>
                         onWordClick({
                           surface: item.word,
                           sentence: item.context,
-                          anchorRect: e.currentTarget.getBoundingClientRect(),
+                          anchorRect: rect,
                           source: item.source || '单词库',
                           subject: item.subject,
-                        });
-                      }}
-                      className="study-word text-left text-lg font-bold text-slate-900 dark:text-slate-50"
-                    >
-                      {item.word}
-                    </button>
+                          trigger,
+                        })
+                      }
+                    />
                     {item.phonetic && (
                       <span className="font-mono text-xs text-slate-500 dark:text-slate-400">
                         /{item.phonetic}/

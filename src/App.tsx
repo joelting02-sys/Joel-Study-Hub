@@ -12,6 +12,7 @@ import {
   Library,
   Menu,
   Moon,
+  MousePointerClick,
   Settings,
   Sun,
   X,
@@ -32,7 +33,10 @@ import type {
 import { studyhubApi } from './api/studyhubApi';
 import { extractErrorMessage } from './lib/errors';
 import { formatDateYmd, getDueReviewWords, normalizeWordKey } from './lib/vocabLogic';
-import type { WordClickPayload } from './components/InteractiveText';
+import {
+  WordLookupBehaviorContext,
+  type WordClickPayload,
+} from './components/InteractiveText';
 import {
   WordLookupPopover,
   type ActiveLookupState,
@@ -62,6 +66,7 @@ function loadPreferences(): AppPreferences {
             ? parsed.translationMode
             : 'auto_fallback',
         autoAddTranslatedVocab: Boolean(parsed.autoAddTranslatedVocab),
+        wordLookupTrigger: parsed.wordLookupTrigger === 'click' ? 'click' : 'hover',
       };
     }
   } catch {
@@ -72,6 +77,7 @@ function loadPreferences(): AppPreferences {
     fontScale: 'normal',
     translationMode: 'auto_fallback',
     autoAddTranslatedVocab: false,
+    wordLookupTrigger: 'hover',
   };
 }
 
@@ -91,7 +97,28 @@ export default function App() {
   const [updateState, setUpdateState] = useState<AppUpdateState | null>(null);
 
   const [activeLookup, setActiveLookup] = useState<ActiveLookupState | null>(null);
+  const activeLookupRef = useRef<ActiveLookupState | null>(null);
+  activeLookupRef.current = activeLookup;
   const lookupSeqRef = useRef(0);
+  const hoverCloseTimerRef = useRef<number | null>(null);
+  const recentHoverCountsRef = useRef<Map<string, number>>(new Map());
+
+  const cancelHoverClose = useCallback(() => {
+    if (hoverCloseTimerRef.current !== null) {
+      window.clearTimeout(hoverCloseTimerRef.current);
+      hoverCloseTimerRef.current = null;
+    }
+  }, []);
+
+  const scheduleHoverClose = useCallback(() => {
+    cancelHoverClose();
+    hoverCloseTimerRef.current = window.setTimeout(() => {
+      hoverCloseTimerRef.current = null;
+      setActiveLookup((prev) => (prev?.openedBy === 'hover' ? null : prev));
+    }, 260);
+  }, [cancelHoverClose]);
+
+  useEffect(() => cancelHoverClose, [cancelHoverClose]);
 
   // 同步深色模式到 <html>
   useEffect(() => {
@@ -218,15 +245,24 @@ export default function App() {
     [],
   );
 
-  // 点击英文单词：先查本地词典，按设置自动调用翻译模型接口，并支持自动加入单词库
+  // 悬停或点击英文单词：先查本地词典，按设置自动调用翻译模型接口，并支持自动加入单词库
   const handleWordClick = useCallback(
     async (payload: WordClickPayload) => {
+      cancelHoverClose();
+      const trigger = payload.trigger ?? 'click';
+      const triggerKey = `${payload.surface}|${payload.source}|${Math.round(payload.anchorRect.left)}|${Math.round(payload.anchorRect.top)}`;
+      if (trigger === 'hover' && activeLookupRef.current?.triggerKey === triggerKey) {
+        return;
+      }
+
       const seq = ++lookupSeqRef.current;
       setActiveLookup({
         loading: true,
         translatingApi: false,
         apiError: '',
         autoSaved: false,
+        openedBy: trigger,
+        triggerKey,
         result: null,
         sentence: payload.sentence,
         source: payload.source,
@@ -332,26 +368,36 @@ export default function App() {
         }
       }
 
-      // 若该词已在单词库，重复点词查意思时自动把 lookup_count + 1（不重复加入）
+      // 若该词已在单词库，查意思时自动把 lookup_count + 1（悬停模式 30 秒内同一词条仅计一次）
       const existing = vocabLookupMap.get(normalizeWordKey(finalResult.word));
       if (existing && !autoSaved) {
-        try {
-          const updated = await studyhubApi.addVocab({
-            word: existing.word,
-            meaning_zh: existing.meaning_zh || finalResult.meaning_zh,
-            phonetic: existing.phonetic || finalResult.phonetic,
-            pos: existing.pos || finalResult.pos,
-            context: payload.sentence,
-            source: payload.source,
-            subject: payload.subject,
-          });
-          setWords(updated.vocab.words);
-        } catch {
-          // 忽略后台计数失败，不影响展示
+        const hoverCountKey = `${normalizeWordKey(existing.word)}|${payload.source}`;
+        const now = Date.now();
+        const lastHoverCountAt = recentHoverCountsRef.current.get(hoverCountKey) ?? 0;
+        const shouldCount = trigger === 'click' || now - lastHoverCountAt > 30_000;
+        if (shouldCount) {
+          if (trigger === 'hover') {
+            recentHoverCountsRef.current.set(hoverCountKey, now);
+          }
+          try {
+            const updated = await studyhubApi.addVocab({
+              word: existing.word,
+              meaning_zh: existing.meaning_zh || finalResult.meaning_zh,
+              phonetic: existing.phonetic || finalResult.phonetic,
+              pos: existing.pos || finalResult.pos,
+              context: payload.sentence,
+              source: payload.source,
+              subject: payload.subject,
+            });
+            setWords(updated.vocab.words);
+          } catch {
+            // 忽略后台计数失败，不影响展示
+          }
         }
       }
     },
     [
+      cancelHoverClose,
       vocabLookupMap,
       translationStatus?.configured,
       preferences.translationMode,
@@ -530,8 +576,18 @@ export default function App() {
     setMobileNavOpen(false);
   };
 
+  const wordLookupBehavior = useMemo(
+    () => ({
+      triggerMode: preferences.wordLookupTrigger,
+      onHoverScheduleClose: scheduleHoverClose,
+      onHoverCancelClose: cancelHoverClose,
+    }),
+    [preferences.wordLookupTrigger, scheduleHoverClose, cancelHoverClose],
+  );
+
   return (
-    <div className="flex min-h-screen bg-slate-50 text-slate-900 dark:bg-[#0B1120] dark:text-slate-100">
+    <WordLookupBehaviorContext.Provider value={wordLookupBehavior}>
+      <div className="flex min-h-screen bg-slate-50 text-slate-900 dark:bg-[#0B1120] dark:text-slate-100">
       {/* 移动端顶部导航栏 */}
       <header className="fixed inset-x-0 top-0 z-30 flex h-14 items-center justify-between border-b border-slate-200 bg-white px-4 lg:hidden dark:border-slate-800 dark:bg-[#0F172A]">
         <div className="flex items-center gap-3">
@@ -630,8 +686,29 @@ export default function App() {
           })}
         </nav>
 
-        {/* 底部主题切换 */}
-        <div className="border-t border-slate-200 p-3 dark:border-slate-800">
+        {/* 底部查词方式与主题切换 */}
+        <div className="space-y-1 border-t border-slate-200 p-3 dark:border-slate-800">
+          <button
+            type="button"
+            title="切换鼠标指到自动翻译 / 点击单词显示"
+            onClick={() =>
+              updatePreferences({
+                wordLookupTrigger:
+                  preferences.wordLookupTrigger === 'hover' ? 'click' : 'hover',
+              })
+            }
+            className="flex w-full items-center justify-between rounded-lg px-3.5 py-2.5 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-900 whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:text-slate-300 dark:hover:bg-slate-800/70 dark:hover:text-slate-50"
+          >
+            <span className="flex items-center gap-3">
+              <MousePointerClick className="h-4 w-4 shrink-0" />
+              <span>
+                {preferences.wordLookupTrigger === 'hover'
+                  ? '查词：指到即译'
+                  : '查词：点击显示'}
+              </span>
+            </span>
+          </button>
+
           <button
             type="button"
             onClick={() =>
@@ -769,7 +846,7 @@ export default function App() {
         )}
       </main>
 
-      {/* 全局点词翻译悬浮卡片 */}
+      {/* 全局查词翻译悬浮卡片 */}
       <WordLookupPopover
         lookup={activeLookup}
         existingEntry={existingPopoverEntry}
@@ -779,8 +856,14 @@ export default function App() {
         onUpdateExistingMeaning={(id, meaningZh) =>
           handleUpdateWord(id, { meaning_zh: meaningZh })
         }
-        onClose={() => setActiveLookup(null)}
+        onClose={() => {
+          cancelHoverClose();
+          setActiveLookup(null);
+        }}
+        onMouseEnter={cancelHoverClose}
+        onMouseLeave={scheduleHoverClose}
       />
-    </div>
+      </div>
+    </WordLookupBehaviorContext.Provider>
   );
 }

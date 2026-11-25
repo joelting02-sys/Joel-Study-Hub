@@ -16,6 +16,8 @@ export interface ActiveLookupState {
   translatingApi?: boolean;
   apiError?: string;
   autoSaved?: boolean;
+  openedBy?: 'hover' | 'click';
+  triggerKey?: string;
   result: LookupResult | null;
   sentence: string;
   source: string;
@@ -39,6 +41,8 @@ interface WordLookupPopoverProps {
   }) => Promise<void>;
   onUpdateExistingMeaning: (id: string, meaningZh: string) => Promise<void>;
   onClose: () => void;
+  onMouseEnter?: () => void;
+  onMouseLeave?: () => void;
 }
 
 const SOURCE_LABELS: Record<LookupResult['source'], string> = {
@@ -57,6 +61,8 @@ export const WordLookupPopover: React.FC<WordLookupPopoverProps> = ({
   onAddVocab,
   onUpdateExistingMeaning,
   onClose,
+  onMouseEnter,
+  onMouseLeave,
 }) => {
   const cardRef = useRef<HTMLDivElement | null>(null);
   const [manualMeaning, setManualMeaning] = useState('');
@@ -90,9 +96,9 @@ export const WordLookupPopover: React.FC<WordLookupPopoverProps> = ({
     }
 
     // 默认放在单词正下方，如果下方空间不足则翻转到上方
-    let top = lookup.anchorRect.bottom + 8;
+    let top = lookup.anchorRect.bottom + 6;
     if (top + cardHeight > window.innerHeight - margin) {
-      top = Math.max(margin, lookup.anchorRect.top - cardHeight - 8);
+      top = Math.max(margin, lookup.anchorRect.top - cardHeight - 6);
     }
 
     setPosition({ top, left });
@@ -176,12 +182,22 @@ export const WordLookupPopover: React.FC<WordLookupPopoverProps> = ({
     }
   };
 
+  const handleCardMouseLeave = () => {
+    const active = document.activeElement;
+    if (active && active.tagName === 'INPUT' && cardRef.current?.contains(active)) {
+      return;
+    }
+    onMouseLeave?.();
+  };
+
   return (
     <div
       ref={cardRef}
       role="dialog"
-      aria-label="点词翻译卡片"
+      aria-label="查词翻译卡片"
       data-testid="word-lookup-popover"
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={handleCardMouseLeave}
       style={{ top: `${position.top}px`, left: `${position.left}px`, width: '360px' }}
       className="fixed z-50 max-w-[calc(100vw-24px)] rounded-xl border border-slate-200 bg-white p-4 shadow-xl shadow-slate-900/10 dark:border-slate-700 dark:bg-[#131C31] dark:shadow-black/40"
     >

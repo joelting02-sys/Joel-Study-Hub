@@ -103,7 +103,7 @@ export const QuizView: React.FC<QuizViewProps> = ({
   const handleQuizWordClick = useCallback(
     (payload: WordClickPayload) => {
       const token = payload.matchedGlossaryKey || payload.surface;
-      setLookedUpWords((prev) => [...prev, token]);
+      setLookedUpWords((prev) => (prev.includes(token) ? prev : [...prev, token]));
       onWordClick(payload);
     },
     [onWordClick],

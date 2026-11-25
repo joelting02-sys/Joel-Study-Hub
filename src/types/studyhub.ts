@@ -158,11 +158,14 @@ export interface EcdictRecord {
 
 export type FontScale = 'normal' | 'large' | 'xlarge';
 
+export type WordLookupTrigger = 'hover' | 'click';
+
 export interface AppPreferences {
   theme: 'light' | 'dark';
   fontScale: FontScale;
   translationMode: TranslationMode;
   autoAddTranslatedVocab: boolean;
+  wordLookupTrigger: WordLookupTrigger;
 }
 
 export interface FolderStatus {

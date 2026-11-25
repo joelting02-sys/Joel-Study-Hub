@@ -1,6 +1,6 @@
 [package]
 name = "studyhub"
-version = "1.0.5"
+version = "1.0.6"
 description = "Joel Study Hub — 纯本地优先 Windows 桌面学习客户端（Tauri v2 + Rust 内核）"
 authors = ["Joel"]
 edition = "2021"
