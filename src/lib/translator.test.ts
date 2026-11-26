@@ -319,7 +319,7 @@ test('translateWordWithApi routes doubao-seed-translation to /responses and gene
   }
 });
 
-test('parseModelTranslationPayload extracts plain_zh, alternatives, and synonyms cleanly', () => {
+test('parseModelTranslationPayload extracts context_zh, plain_zh, alternatives, and synonyms cleanly', () => {
   const rich = parseModelTranslationPayload(
     {
       choices: [
@@ -329,9 +329,10 @@ test('parseModelTranslationPayload extracts plain_zh, alternatives, and synonyms
               word: 'stakeholder',
               phonetic: 'ˈsteɪkhəʊldə(r)',
               pos: 'n.',
+              context_zh: '企业利益相关方',
               meaning_zh: '利益相关者；干系人',
               plain_zh: '跟公司或项目有利害关系的人（比如股东、员工、客户）',
-              alternatives: ['股东', '利益方', '利益相关者；干系人'],
+              alternatives: ['股东', '利益方', '利益相关者；干系人', '企业利益相关方'],
               synonyms: ['shareholder', 'interested party', 'stakeholders'],
             }),
           },
@@ -341,6 +342,7 @@ test('parseModelTranslationPayload extracts plain_zh, alternatives, and synonyms
     'stakeholders',
   );
   assert.equal(rich.word, 'stakeholder');
+  assert.equal(rich.context_zh, '企业利益相关方');
   assert.equal(rich.plain_zh, '跟公司或项目有利害关系的人（比如股东、员工、客户）');
   assert.deepEqual(rich.alternatives, ['股东', '利益方']);
   assert.deepEqual(rich.synonyms, ['shareholder', 'interested party']);
@@ -383,7 +385,7 @@ test('pickFastReasoningEffort disables reasoning for DeepSeek Flash and retries 
     );
     assert.equal(attempts.length, 2);
     assert.equal(attempts[0].reasoning_effort, 'none');
-    assert.equal(attempts[0].max_tokens, 260);
+    assert.equal(attempts[0].max_tokens, 280);
     assert.equal('reasoning_effort' in attempts[1], false);
     assert.equal(res.meaning_zh, '利益相关者；股东');
   } finally {

@@ -20,18 +20,26 @@ import {
 } from 'lucide-react';
 import type {
   LookupResult,
+  SpeechAccent,
+  SpeechEngine,
+  SpeechRate,
   SubjectCode,
   VocabEntry,
   VocabStatus,
 } from '../types/studyhub';
 import { filterAndSortVocab } from '../lib/vocabLogic';
 import { extractErrorMessage } from '../lib/errors';
+import { formatPhoneticDisplay } from '../lib/lookupHelpers';
 import { InteractiveText, StudyWordButton, type WordClickPayload } from './InteractiveText';
+import { WordSpeakButton } from './WordSpeakButton';
 
 interface VocabViewProps {
   words: VocabEntry[];
   vocabLookupMap: Map<string, VocabEntry>;
   translationConfigured: boolean;
+  speechAccent: SpeechAccent;
+  speechRate: SpeechRate;
+  speechEngine: SpeechEngine;
   onWordClick: (payload: WordClickPayload) => void;
   onLookupAndTranslate: (payload: {
     surface: string;
@@ -129,6 +137,9 @@ export const VocabView: React.FC<VocabViewProps> = ({
   words,
   vocabLookupMap,
   translationConfigured,
+  speechAccent,
+  speechRate,
+  speechEngine,
   onWordClick,
   onLookupAndTranslate,
   onAddVocab,
@@ -343,13 +354,19 @@ export const VocabView: React.FC<VocabViewProps> = ({
         {quickResult && (
           <div className="space-y-2.5 rounded-lg border border-slate-200 bg-slate-50/70 p-3.5 dark:border-slate-700 dark:bg-slate-900/50">
             <div className="flex flex-wrap items-baseline justify-between gap-2">
-              <div className="flex flex-wrap items-baseline gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <span className="text-base font-bold text-slate-900 dark:text-slate-50">
                   {quickResult.word}
                 </span>
-                {quickResult.phonetic && (
+                <WordSpeakButton
+                  text={quickResult.word}
+                  accent={speechAccent}
+                  rate={speechRate}
+                  engine={speechEngine}
+                />
+                {formatPhoneticDisplay(quickResult.phonetic) && (
                   <span className="font-mono text-xs text-slate-500 dark:text-slate-400">
-                    /{quickResult.phonetic}/
+                    {formatPhoneticDisplay(quickResult.phonetic)}
                   </span>
                 )}
                 {quickResult.pos && (
@@ -530,8 +547,8 @@ export const VocabView: React.FC<VocabViewProps> = ({
                 className="flex flex-col gap-3 p-5 lg:flex-row lg:items-start lg:justify-between"
               >
                 <div className="min-w-0 flex-1 space-y-2">
-                  {/* 单词（支持悬停或点击弹出翻译卡片） + 音标 + 词性 */}
-                  <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                  {/* 单词（支持悬停或点击弹出翻译卡片） + 小播放键 + 音标 + 词性 */}
+                  <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
                     <StudyWordButton
                       word={item.word}
                       dataStudyWord={item.word}
@@ -547,9 +564,15 @@ export const VocabView: React.FC<VocabViewProps> = ({
                         })
                       }
                     />
-                    {item.phonetic && (
+                    <WordSpeakButton
+                      text={item.word}
+                      accent={speechAccent}
+                      rate={speechRate}
+                      engine={speechEngine}
+                    />
+                    {formatPhoneticDisplay(item.phonetic) && (
                       <span className="font-mono text-xs text-slate-500 dark:text-slate-400">
-                        /{item.phonetic}/
+                        {formatPhoneticDisplay(item.phonetic)}
                       </span>
                     )}
                     {item.pos && (
@@ -594,7 +617,12 @@ export const VocabView: React.FC<VocabViewProps> = ({
                   )}
 
                   {/* 原句（目标词高亮 + 所有英文单词皆可点词翻译） */}
-                  <p className="text-sm leading-relaxed text-slate-600 dark:text-slate-300">
+                  <p
+                    data-study-selectable="true"
+                    data-study-source={item.source || '单词库'}
+                    data-study-subject={item.subject}
+                    className="text-sm leading-relaxed text-slate-600 dark:text-slate-300"
+                  >
                     <HighlightedInteractiveSentence
                       sentence={item.context}
                       target={item.word}

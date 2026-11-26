@@ -667,6 +667,7 @@ pub fn parse_translation_payload(
     let mut word = cleaned_surface.clone();
     let mut phonetic = String::new();
     let mut pos = String::new();
+    let mut context_zh = String::new();
     let mut meaning_zh = String::new();
     let mut plain_zh = String::new();
     let mut alternatives: Vec<String> = Vec::new();
@@ -681,6 +682,15 @@ pub fn parse_translation_payload(
             .trim_matches('/')
             .to_string();
         pos = pick_str(&map, &["pos", "part_of_speech", "partOfSpeech"]);
+        context_zh = pick_str(
+            &map,
+            &[
+                "context_zh",
+                "contextZh",
+                "contextual_meaning",
+                "context_meaning",
+            ],
+        );
         meaning_zh = pick_str(
             &map,
             &[
@@ -713,7 +723,7 @@ pub fn parse_translation_payload(
                 "cn_synonyms",
                 "translations",
             ],
-            &[&meaning_zh],
+            &[&meaning_zh, &context_zh],
             6,
         );
         synonyms = pick_str_list(
@@ -755,6 +765,11 @@ pub fn parse_translation_payload(
         phonetic,
         pos,
         meaning_zh,
+        context_zh: if context_zh.is_empty() {
+            None
+        } else {
+            Some(context_zh)
+        },
         plain_zh: if plain_zh.is_empty() {
             None
         } else {
@@ -811,7 +826,7 @@ pub async fn translate_word_with_api(
     data_dir: Option<&Path>,
     input: TranslateWordInput,
 ) -> Result<LookupResult, String> {
-    let surface: String = input.surface.trim().chars().take(120).collect();
+    let surface: String = input.surface.trim().chars().take(240).collect();
     if surface.is_empty() {
         return Err("缺少待翻译的英文单词或短语".to_string());
     }
@@ -926,7 +941,7 @@ pub async fn translate_word_with_api(
             json!([
                 {
                     "role": "system",
-                    "content": "英汉学习词典。只返回合法JSON：{\"word\":\"词原形\",\"phonetic\":\"音标(无斜杠)\",\"pos\":\"词性\",\"meaning_zh\":\"2-4个核心中文义项，；分隔\",\"plain_zh\":\"一句大白话通俗解释\",\"alternatives\":[\"2-3个直观中文说法\"],\"synonyms\":[\"2-3个英文同义词\"]}"
+                    "content": "英汉学习词典。只返回合法JSON：{\"word\":\"词原形或短语\",\"phonetic\":\"音标(无斜杠)\",\"pos\":\"词性\",\"context_zh\":\"在当前原句中最贴切的一句话中文意思(无原句可留空)\",\"meaning_zh\":\"2-4个核心中文义项，；分隔\",\"plain_zh\":\"一句大白话通俗解释\",\"alternatives\":[\"2-3个直观中文说法\"],\"synonyms\":[\"2-3个英文同义词\"]}"
                 },
                 {
                     "role": "user",
@@ -938,7 +953,9 @@ pub async fn translate_word_with_api(
             if let Some(effort) = reasoning_effort {
                 obj.insert("reasoning_effort".to_string(), json!(effort));
                 if effort == "none" {
-                    obj.insert("max_tokens".to_string(), json!(260));
+                    obj.insert("max_tokens".to_string(), json!(280));
+                } else if effort == "low" {
+                    obj.insert("max_tokens".to_string(), json!(340));
                 }
             }
         }
@@ -1047,12 +1064,13 @@ mod tests {
         let rich_chat_resp = json!({
             "choices": [{
                 "message": {
-                    "content": "{\"word\":\"stakeholder\",\"phonetic\":\"ˈsteɪkhəʊldə(r)\",\"pos\":\"n.\",\"meaning_zh\":\"利益相关者；干系人\",\"plain_zh\":\"跟企业或项目有利害关系的人（如股东、员工、客户）\",\"alternatives\":[\"股东\",\"利益方\",\"相关方\"],\"synonyms\":[\"shareholder\",\"interested party\",\"stakeholder\"]}"
+                    "content": "{\"word\":\"stakeholder\",\"phonetic\":\"ˈsteɪkhəʊldə(r)\",\"pos\":\"n.\",\"context_zh\":\"企业利益相关方\",\"meaning_zh\":\"利益相关者；干系人\",\"plain_zh\":\"跟企业或项目有利害关系的人（如股东、员工、客户）\",\"alternatives\":[\"股东\",\"利益方\",\"相关方\",\"企业利益相关方\"],\"synonyms\":[\"shareholder\",\"interested party\",\"stakeholder\"]}"
                 }
             }]
         });
         let rich = parse_translation_payload(&rich_chat_resp, "stakeholders").unwrap();
         assert_eq!(rich.word, "stakeholder");
+        assert_eq!(rich.context_zh.as_deref(), Some("企业利益相关方"));
         assert_eq!(
             rich.plain_zh.as_deref(),
             Some("跟企业或项目有利害关系的人（如股东、员工、客户）")

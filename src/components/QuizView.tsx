@@ -317,7 +317,12 @@ export const QuizView: React.FC<QuizViewProps> = ({
                     {question.source && <span>{question.source}</span>}
                   </div>
 
-                  <div className={`${READING_SIZE_CLASS[fontScale]} text-slate-900 dark:text-slate-100`}>
+                  <div
+                    data-study-selectable="true"
+                    data-study-source={`${activeQuiz.title} · Q${index + 1}`}
+                    data-study-subject={activeQuiz.subject}
+                    className={`${READING_SIZE_CLASS[fontScale]} text-slate-900 dark:text-slate-100`}
+                  >
                     <MarkdownContent
                       text={question.stem}
                       interactive
@@ -455,6 +460,9 @@ export const QuizView: React.FC<QuizViewProps> = ({
           {/* 英文题干（支持 Markdown 排版 + 每个英文单词均可点词翻译） */}
           <div
             data-testid="quiz-question-stem"
+            data-study-selectable="true"
+            data-study-source={questionSource}
+            data-study-subject={activeQuiz.subject}
             className={`mt-5 font-medium text-slate-900 dark:text-slate-50 ${READING_SIZE_CLASS[fontScale]}`}
           >
             <MarkdownContent
@@ -470,7 +478,12 @@ export const QuizView: React.FC<QuizViewProps> = ({
 
           {/* 提示区域 */}
           {isHintVisible && currentQuestion.hint && (
-            <div className="mt-5 space-y-1 rounded-lg border border-amber-200 bg-amber-50/70 px-4 py-3 text-sm text-amber-950 dark:border-amber-800/60 dark:bg-amber-950/30 dark:text-amber-200">
+            <div
+              data-study-selectable="true"
+              data-study-source={questionSource}
+              data-study-subject={activeQuiz.subject}
+              className="mt-5 space-y-1 rounded-lg border border-amber-200 bg-amber-50/70 px-4 py-3 text-sm text-amber-950 dark:border-amber-800/60 dark:bg-amber-950/30 dark:text-amber-200"
+            >
               <p className="font-semibold">提示：</p>
               <MarkdownContent
                 text={currentQuestion.hint}
@@ -518,7 +531,11 @@ export const QuizView: React.FC<QuizViewProps> = ({
                 <div
                   key={idx}
                   data-testid={`quiz-option-${idx}`}
-                  onClick={() => selectAnswer(idx)}
+                  onClick={() => {
+                    const sel = window.getSelection()?.toString().trim();
+                    if (sel) return;
+                    selectAnswer(idx);
+                  }}
                   className={`flex items-start gap-4 rounded-xl border p-4 transition-colors ${
                     isAnswered ? '' : 'cursor-pointer'
                   } ${rowStyle}`}
@@ -537,6 +554,9 @@ export const QuizView: React.FC<QuizViewProps> = ({
                   </button>
 
                   <div
+                    data-study-selectable="true"
+                    data-study-source={questionSource}
+                    data-study-subject={activeQuiz.subject}
                     className={`min-w-0 flex-1 pt-0.5 text-slate-800 dark:text-slate-100 ${READING_SIZE_CLASS[fontScale]}`}
                   >
                     <MarkdownContent
@@ -593,7 +613,12 @@ export const QuizView: React.FC<QuizViewProps> = ({
                   </span>
                 )}
               </div>
-              <div className="mt-2.5 text-base leading-relaxed text-slate-800 dark:text-slate-200">
+              <div
+                data-study-selectable="true"
+                data-study-source={questionSource}
+                data-study-subject={activeQuiz.subject}
+                className="mt-2.5 text-base leading-relaxed text-slate-800 dark:text-slate-200"
+              >
                 <MarkdownContent
                   text={currentQuestion.explanation_zh}
                   interactive

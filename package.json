@@ -1,7 +1,7 @@
 {
   "name": "studyhub",
   "private": true,
-  "version": "1.0.9",
+  "version": "1.0.10",
   "description": "StudyHub — 个人英语与专业课本地桌面学习客户端（Tauri v2 + Rust）",
   "type": "module",
   "scripts": {
@@ -13,7 +13,7 @@
     "tauri:build": "npx @tauri-apps/cli@2 build --bundles nsis",
     "clean": "rm -rf dist release src-tauri/target",
     "lint": "tsc --noEmit",
-    "test": "tsx --test src/lib/dictionary.test.ts src/lib/vocabLogic.test.ts src/lib/quizLogic.test.ts src/lib/markdown.test.ts src/lib/translator.test.ts src/lib/tauriContract.test.ts"
+    "test": "tsx --test src/lib/dictionary.test.ts src/lib/vocabLogic.test.ts src/lib/quizLogic.test.ts src/lib/markdown.test.ts src/lib/translator.test.ts src/lib/translationCache.test.ts src/lib/tauriContract.test.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

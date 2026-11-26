@@ -17,6 +17,8 @@ import type {
   SaveTranslationConfigInput,
   TranslateWordInput,
   TranslationApiStatus,
+  TtsAudioInput,
+  TtsAudioResult,
   VocabEntry,
   VocabFile,
   VocabStatus,
@@ -268,6 +270,16 @@ export const studyhubApi = {
     });
   },
 
+  fetchTtsAudio(input: TtsAudioInput): Promise<TtsAudioResult> {
+    if (isTauriDesktop()) {
+      return invoke<TtsAudioResult>('fetch_tts_audio', { input });
+    }
+    return requestJson<TtsAudioResult>('/api/tts', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    });
+  },
+
   /**
    * 实时监听数据文件夹变化：
    * - Tauri v2 桌面客户端使用原生 Rust notify + Tauri Event（零 SSE、零 localhost）
@@ -319,7 +331,7 @@ export const studyhubApi = {
   async getUpdateState(): Promise<AppUpdateState> {
     if (isTauriDesktop()) return invoke<AppUpdateState>('get_update_state');
     return {
-      currentVersion: '1.0.9',
+      currentVersion: '1.0.10',
       isPackaged: false,
       isPortable: false,
       supported: false,

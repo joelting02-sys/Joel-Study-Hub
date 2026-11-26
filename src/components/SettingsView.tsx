@@ -40,12 +40,17 @@ import type {
   LookupResult,
   QuizResultFile,
   SaveTranslationConfigInput,
+  SpeechAccent,
+  SpeechEngine,
+  SpeechRate,
   TranslationApiStatus,
   TranslationMode,
   WordLookupTrigger,
 } from '../types/studyhub';
 import { extractErrorMessage } from '../lib/errors';
-import { isDedicatedTranslationModel, pickPreferredChatModel } from '../lib/lookupHelpers';
+import { formatPhoneticDisplay, isDedicatedTranslationModel, pickPreferredChatModel } from '../lib/lookupHelpers';
+import { speakWord } from '../lib/speech';
+import { WordSpeakButton } from './WordSpeakButton';
 
 const DOUBAO_DEFAULT_BASE_URL = 'https://ark.cn-beijing.volces.com/api/v3';
 const DOUBAO_DEFAULT_MODEL = 'doubao-seed-translation-250915';
@@ -345,7 +350,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               软件更新
             </h2>
             <span className="font-mono text-xs text-slate-500 dark:text-slate-400">
-              当前版本 v{updateState?.currentVersion || '1.0.9'}
+              当前版本 v{updateState?.currentVersion || '1.0.10'}
             </span>
           </div>
 
@@ -533,6 +538,138 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 onClick={() => onUpdatePreferences({ wordLookupTrigger: mode })}
                 className={`rounded-md px-3.5 py-1.5 text-sm font-medium transition-colors whitespace-nowrap ${
                   preferences.wordLookupTrigger === mode
+                    ? 'bg-white text-slate-900 shadow-xs dark:bg-slate-900 dark:text-slate-50'
+                    : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* 单词朗读选项（默认静默，仅在你点击小播放键时朗读） */}
+      <section
+        data-testid="settings-speech-section"
+        className="space-y-4 rounded-xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-[#131C31]"
+      >
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">
+              单词朗读选项
+            </h2>
+            <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
+              默认保持静默，仅在你主动点击单词旁的小播放键时朗读
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <WordSpeakButton
+              text="entrepreneurship"
+              accent={preferences.speechAccent}
+              rate={preferences.speechRate}
+              engine={preferences.speechEngine}
+              size="sm"
+              title="试听 entrepreneurship"
+            />
+            <button
+              type="button"
+              onClick={() =>
+                void speakWord('entrepreneurship', {
+                  accent: preferences.speechAccent,
+                  rate: preferences.speechRate,
+                  engine: preferences.speechEngine,
+                })
+              }
+              className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+            >
+              试听 (entrepreneurship)
+            </button>
+          </div>
+        </div>
+
+        <div className="flex flex-col gap-4 border-t border-slate-100 pt-4 sm:flex-row sm:items-center sm:justify-between dark:border-slate-800">
+          <div>
+            <p className="text-sm font-medium text-slate-800 dark:text-slate-200">发音口音</p>
+            <p className="text-xs text-slate-500 dark:text-slate-400">
+              在弹窗和单词库中点击小播放键时的默认口音
+            </p>
+          </div>
+          <div className="flex items-center gap-1 rounded-lg bg-slate-100 p-1 w-fit dark:bg-slate-800">
+            {(
+              [
+                ['en-US', '美式 (en-US)'],
+                ['en-GB', '英式 (en-GB)'],
+              ] as Array<[SpeechAccent, string]>
+            ).map(([accent, label]) => (
+              <button
+                key={accent}
+                type="button"
+                onClick={() => onUpdatePreferences({ speechAccent: accent })}
+                className={`rounded-md px-3.5 py-1.5 text-xs font-medium transition-colors whitespace-nowrap ${
+                  preferences.speechAccent === accent
+                    ? 'bg-white text-slate-900 shadow-xs dark:bg-slate-900 dark:text-slate-50'
+                    : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="flex flex-col gap-4 border-t border-slate-100 pt-4 sm:flex-row sm:items-center sm:justify-between dark:border-slate-800">
+          <div>
+            <p className="text-sm font-medium text-slate-800 dark:text-slate-200">朗读语速</p>
+            <p className="text-xs text-slate-500 dark:text-slate-400">
+              遇到长难词时可调慢语速听清每个音节
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-1 rounded-lg bg-slate-100 p-1 w-fit dark:bg-slate-800">
+            {(
+              [
+                [0.75, '0.75x 慢速'],
+                [0.85, '0.85x 较慢'],
+                [1, '1.0x 正常'],
+                [1.15, '1.15x 较快'],
+              ] as Array<[SpeechRate, string]>
+            ).map(([rate, label]) => (
+              <button
+                key={rate}
+                type="button"
+                onClick={() => onUpdatePreferences({ speechRate: rate })}
+                className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors whitespace-nowrap ${
+                  preferences.speechRate === rate
+                    ? 'bg-white text-slate-900 shadow-xs dark:bg-slate-900 dark:text-slate-50'
+                    : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="flex flex-col gap-4 border-t border-slate-100 pt-4 sm:flex-row sm:items-center sm:justify-between dark:border-slate-800">
+          <div>
+            <p className="text-sm font-medium text-slate-800 dark:text-slate-200">发音引擎</p>
+            <p className="text-xs text-slate-500 dark:text-slate-400">
+              在线词典发音会自动缓存到本地，断网时自动无缝切换到系统语音
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-1 rounded-lg bg-slate-100 p-1 w-fit dark:bg-slate-800">
+            {(
+              [
+                ['online_cached', '在线词典（本地缓存+离线兜底）'],
+                ['offline_only', '仅离线系统语音'],
+              ] as Array<[SpeechEngine, string]>
+            ).map(([engine, label]) => (
+              <button
+                key={engine}
+                type="button"
+                onClick={() => onUpdatePreferences({ speechEngine: engine })}
+                className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors whitespace-nowrap ${
+                  preferences.speechEngine === engine
                     ? 'bg-white text-slate-900 shadow-xs dark:bg-slate-900 dark:text-slate-50'
                     : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100'
                 }`}
@@ -807,8 +944,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               <div>
                 <span className="font-semibold">测试成功：</span>
                 <span className="font-bold">{testResult.word}</span>
-                {testResult.phonetic && (
-                  <span className="ml-2 font-mono text-xs">/{testResult.phonetic}/</span>
+                {formatPhoneticDisplay(testResult.phonetic) && (
+                  <span className="ml-2 font-mono text-xs">
+                    {formatPhoneticDisplay(testResult.phonetic)}
+                  </span>
                 )}
                 {testResult.pos && <span className="ml-2 text-xs">{testResult.pos}</span>}
                 <span className="ml-2">— {testResult.meaning_zh}</span>
@@ -840,7 +979,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 点击单词时的翻译方式
               </p>
               <p className="text-xs text-slate-500 dark:text-slate-400">
-                在测验、复习和单词库中点词时，自动按所选策略调用你的翻译模型
+                在测验、复习和单词库中点词时按所选策略调用；常见虚词自动秒出本地释义，AI 结果跨重启本地缓存
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-1 rounded-lg bg-slate-100 p-1 w-fit dark:bg-slate-800">

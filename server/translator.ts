@@ -556,6 +556,7 @@ export function parseModelTranslationPayload(
   let word = cleanedSurface;
   let phonetic = '';
   let pos = '';
+  let contextZh = '';
   let meaningZh = '';
   let plainZh = '';
   let alternatives: string[] = [];
@@ -565,6 +566,12 @@ export function parseModelTranslationPayload(
     word = pickString(obj, ['word', 'lemma', 'base_form']) || cleanedSurface;
     phonetic = pickString(obj, ['phonetic', 'ipa']).replace(/^\/+|\/+$/g, '');
     pos = pickString(obj, ['pos', 'part_of_speech', 'partOfSpeech']);
+    contextZh = pickString(obj, [
+      'context_zh',
+      'contextZh',
+      'contextual_meaning',
+      'context_meaning',
+    ]);
     meaningZh = pickString(obj, [
       'meaning_zh',
       'translation',
@@ -585,7 +592,7 @@ export function parseModelTranslationPayload(
     alternatives = pickStringList(
       obj,
       ['alternatives', 'chinese_synonyms', 'other_meanings', 'cn_synonyms', 'translations'],
-      [meaningZh],
+      [meaningZh, contextZh],
     );
     synonyms = pickStringList(
       obj,
@@ -613,6 +620,7 @@ export function parseModelTranslationPayload(
     phonetic,
     pos,
     meaning_zh: meaningZh,
+    ...(contextZh ? { context_zh: contextZh } : {}),
     ...(plainZh ? { plain_zh: plainZh } : {}),
     ...(alternatives.length > 0 ? { alternatives } : {}),
     ...(synonyms.length > 0 ? { synonyms } : {}),
@@ -704,7 +712,7 @@ export async function translateWordWithApi(
   fetchImpl: typeof fetch = fetch,
   configPath: string = CONFIG_FILE_PATH,
 ): Promise<LookupResult> {
-  const surface = (input.surface || '').trim().slice(0, 120);
+  const surface = (input.surface || '').trim().slice(0, 240);
   if (!surface) {
     throw new Error('缺少待翻译的英文单词或短语');
   }
@@ -794,7 +802,7 @@ export async function translateWordWithApi(
         {
           role: 'system',
           content:
-            '英汉学习词典。只返回合法JSON：{"word":"词原形","phonetic":"音标(无斜杠)","pos":"词性","meaning_zh":"2-4个核心中文义项，；分隔","plain_zh":"一句大白话通俗解释","alternatives":["2-3个直观中文说法"],"synonyms":["2-3个英文同义词"]}',
+            '英汉学习词典。只返回合法JSON：{"word":"词原形或短语","phonetic":"音标(无斜杠)","pos":"词性","context_zh":"在当前原句中最贴切的一句话中文意思(无原句可留空)","meaning_zh":"2-4个核心中文义项，；分隔","plain_zh":"一句大白话通俗解释","alternatives":["2-3个直观中文说法"],"synonyms":["2-3个英文同义词"]}',
         },
         {
           role: 'user',
@@ -805,7 +813,9 @@ export async function translateWordWithApi(
     if (withReasoningControl && reasoningEffort) {
       payload.reasoning_effort = reasoningEffort;
       if (reasoningEffort === 'none') {
-        payload.max_tokens = 260;
+        payload.max_tokens = 280;
+      } else if (reasoningEffort === 'low') {
+        payload.max_tokens = 340;
       }
     }
     return payload;

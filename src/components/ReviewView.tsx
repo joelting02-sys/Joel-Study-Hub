@@ -8,19 +8,33 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import { Award, Check, CheckCircle2, Eye, RotateCcw } from 'lucide-react';
-import type { FontScale, VocabEntry, VocabStatus } from '../types/studyhub';
+import type {
+  FontScale,
+  SpeechAccent,
+  SpeechEngine,
+  SpeechRate,
+  VocabEntry,
+  VocabStatus,
+} from '../types/studyhub';
 import {
   calculateNextReview,
   formatDateYmd,
   getDueReviewWords,
   getReviewStageInfo,
 } from '../lib/vocabLogic';
+import { formatPhoneticDisplay } from '../lib/lookupHelpers';
+import { speakWord } from '../lib/speech';
 import { InteractiveText, StudyWordButton, type WordClickPayload } from './InteractiveText';
+import { WordSpeakButton } from './WordSpeakButton';
 
 interface ReviewViewProps {
   words: VocabEntry[];
   vocabLookupMap: Map<string, VocabEntry>;
   fontScale: FontScale;
+  speechAccent: SpeechAccent;
+  speechRate: SpeechRate;
+  speechEngine: SpeechEngine;
+  isPopoverOpen: boolean;
   onRecordReview: (id: string, remembered: boolean) => Promise<void>;
   onMarkWordStatus: (id: string, status: VocabStatus) => Promise<void>;
   onWordClick: (payload: WordClickPayload) => void;
@@ -42,6 +56,10 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
   words,
   vocabLookupMap,
   fontScale,
+  speechAccent,
+  speechRate,
+  speechEngine,
+  isPopoverOpen,
   onRecordReview,
   onMarkWordStatus,
   onWordClick,
@@ -69,20 +87,30 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
     setRevealed(false);
   }, [currentCard?.id]);
 
-  // 空格键翻开卡片背面
+  // 空格键翻开卡片背面；R 键手动朗读当前单词（仅在显式按键时触发，绝不自动朗读）
   useEffect(() => {
-    if (subTab !== 'due' || !currentCard || revealed) return;
+    if (subTab !== 'due' || !currentCard) return;
     const onKeyDown = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
-      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return;
-      if (e.code === 'Space') {
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
+        return;
+      }
+      if (isPopoverOpen) return;
+      if (!revealed && e.code === 'Space') {
         e.preventDefault();
         setRevealed(true);
+      } else if (e.key === 'r' || e.key === 'R') {
+        e.preventDefault();
+        void speakWord(currentCard.word, {
+          accent: speechAccent,
+          rate: speechRate,
+          engine: speechEngine,
+        });
       }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [subTab, currentCard, revealed]);
+  }, [subTab, currentCard, revealed, isPopoverOpen, speechAccent, speechRate, speechEngine]);
 
   const handleAnswer = async (remembered: boolean) => {
     if (!currentCard || submitting) return;
@@ -204,7 +232,7 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
                 className="flex flex-col gap-3 p-5 sm:flex-row sm:items-start sm:justify-between"
               >
                 <div className="min-w-0 flex-1 space-y-1.5">
-                  <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
+                  <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
                     <StudyWordButton
                       word={item.word}
                       dataStudyWord={item.word}
@@ -220,9 +248,15 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
                         })
                       }
                     />
-                    {item.phonetic && (
+                    <WordSpeakButton
+                      text={item.word}
+                      accent={speechAccent}
+                      rate={speechRate}
+                      engine={speechEngine}
+                    />
+                    {formatPhoneticDisplay(item.phonetic) && (
                       <span className="font-mono text-xs text-slate-500 dark:text-slate-400">
-                        /{item.phonetic}/
+                        {formatPhoneticDisplay(item.phonetic)}
                       </span>
                     )}
                     {item.pos && (
@@ -239,7 +273,12 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
                   </p>
 
                   {item.context && (
-                    <p className="text-xs leading-relaxed text-slate-500 dark:text-slate-400">
+                    <p
+                      data-study-selectable="true"
+                      data-study-source={item.source || '复习已学会'}
+                      data-study-subject={item.subject}
+                      className="text-xs leading-relaxed text-slate-500 dark:text-slate-400"
+                    >
                       <InteractiveText
                         text={item.context}
                         source={item.source}
@@ -343,15 +382,25 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
           </div>
         </div>
 
-        {/* 正面：英文单词 + 音标 + 原句 */}
+        {/* 正面：英文单词 + 小播放键 + 音标 + 原句 */}
         <div className="mt-8 text-center">
-          <h2 className="text-3xl font-bold tracking-tight text-slate-900 dark:text-slate-50">
-            {currentCard.word}
-          </h2>
-          {(currentCard.phonetic || currentCard.pos) && (
+          <div className="inline-flex items-center justify-center gap-2.5">
+            <h2 className="text-3xl font-bold tracking-tight text-slate-900 dark:text-slate-50">
+              {currentCard.word}
+            </h2>
+            <WordSpeakButton
+              text={currentCard.word}
+              accent={speechAccent}
+              rate={speechRate}
+              engine={speechEngine}
+              size="sm"
+              title={`点我朗读 ${currentCard.word} (快捷键 R)`}
+            />
+          </div>
+          {(formatPhoneticDisplay(currentCard.phonetic) || currentCard.pos) && (
             <p className="mt-2 font-mono text-sm text-slate-500 dark:text-slate-400">
-              {currentCard.phonetic ? `/${currentCard.phonetic}/` : ''}
-              {currentCard.phonetic && currentCard.pos ? ' · ' : ''}
+              {formatPhoneticDisplay(currentCard.phonetic)}
+              {formatPhoneticDisplay(currentCard.phonetic) && currentCard.pos ? ' · ' : ''}
               {currentCard.pos}
             </p>
           )}
@@ -359,6 +408,9 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
 
         {currentCard.context && (
           <div
+            data-study-selectable="true"
+            data-study-source={currentCard.source}
+            data-study-subject={currentCard.subject}
             className={`mt-8 rounded-lg border border-slate-200 bg-slate-50/70 p-5 text-slate-700 dark:border-slate-800 dark:bg-slate-900/50 dark:text-slate-200 ${READING_SIZE_CLASS[fontScale]}`}
           >
             {(() => {

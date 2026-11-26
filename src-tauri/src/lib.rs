@@ -2,6 +2,7 @@ pub mod dictionary;
 pub mod models;
 pub mod storage;
 pub mod translator;
+pub mod tts;
 pub mod updater;
 pub mod vocab;
 
@@ -10,8 +11,8 @@ use models::{
     FetchModelsInput, FetchModelsResult, FolderStatus, ImportInboxResponse, ImportQuizResponse,
     LookupOptionsInput, LookupResult, PickDataDirResponse, QuizFile, QuizResultFile,
     QuizzesResponse, ResultsResponse, SaveResultResponse, SaveTranslationConfigInput,
-    StorageChangeEvent, TranslateWordInput, TranslationApiStatus, UpdateVocabPatch, VocabFile,
-    VocabInboxFile,
+    StorageChangeEvent, TranslateWordInput, TranslationApiStatus, TtsAudioInput, TtsAudioResult,
+    UpdateVocabPatch, VocabFile, VocabInboxFile,
 };
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use std::path::Path;
@@ -466,6 +467,11 @@ async fn translate_word_cmd(
     translator::translate_word_with_api(&config_path, Some(&data_dir), input).await
 }
 
+#[tauri::command]
+async fn fetch_tts_audio(input: TtsAudioInput) -> Result<TtsAudioResult, String> {
+    tts::fetch_tts_audio(input).await
+}
+
 // ==================== GitHub Releases 零密钥应用内升级 Commands ====================
 
 #[tauri::command]
@@ -565,6 +571,7 @@ pub fn run() {
             save_translation_config,
             fetch_translation_models,
             translate_word_cmd,
+            fetch_tts_audio,
             get_update_state,
             check_for_updates,
             download_update,

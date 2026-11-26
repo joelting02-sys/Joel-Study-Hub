@@ -250,6 +250,8 @@ pub struct LookupResult {
     pub pos: String,
     pub meaning_zh: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_zh: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub plain_zh: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub alternatives: Vec<String>,
@@ -314,6 +316,22 @@ pub struct TranslateWordInput {
     pub sentence: Option<String>,
     #[serde(default)]
     pub subject: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TtsAudioInput {
+    pub text: String,
+    #[serde(default)]
+    pub accent: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TtsAudioResult {
+    pub mime: String,
+    pub audio_base64: String,
+    pub cached: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

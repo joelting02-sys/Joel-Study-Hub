@@ -8,9 +8,16 @@
 
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Check, Languages, Loader2, Plus, RefreshCw, X } from 'lucide-react';
-import type { LookupResult, VocabEntry } from '../types/studyhub';
+import type {
+  LookupResult,
+  SpeechAccent,
+  SpeechEngine,
+  SpeechRate,
+  VocabEntry,
+} from '../types/studyhub';
 import { extractErrorMessage } from '../lib/errors';
-import { isDedicatedTranslationModel } from '../lib/lookupHelpers';
+import { formatPhoneticDisplay, isDedicatedTranslationModel } from '../lib/lookupHelpers';
+import { WordSpeakButton } from './WordSpeakButton';
 
 export interface ActiveLookupState {
   loading: boolean;
@@ -31,6 +38,10 @@ interface WordLookupPopoverProps {
   existingEntry: VocabEntry | null;
   translationConfigured: boolean;
   translationModel?: string;
+  speechAccent: SpeechAccent;
+  speechRate: SpeechRate;
+  speechEngine: SpeechEngine;
+  onToggleAccent: () => void;
   onRequestApiTranslate: () => Promise<void>;
   onSelectSynonym?: (word: string) => void;
   onAddVocab: (payload: {
@@ -61,6 +72,10 @@ export const WordLookupPopover: React.FC<WordLookupPopoverProps> = ({
   existingEntry,
   translationConfigured,
   translationModel = '',
+  speechAccent,
+  speechRate,
+  speechEngine,
+  onToggleAccent,
   onRequestApiTranslate,
   onSelectSynonym,
   onAddVocab,
@@ -215,13 +230,31 @@ export const WordLookupPopover: React.FC<WordLookupPopoverProps> = ({
             </div>
           ) : (
             <>
-              <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                 <span className="text-lg font-bold tracking-tight text-slate-900 dark:text-slate-50">
                   {result.word}
                 </span>
-                {result.phonetic && (
+                <WordSpeakButton
+                  text={result.word}
+                  accent={speechAccent}
+                  rate={speechRate}
+                  engine={speechEngine}
+                  size="sm"
+                />
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onToggleAccent();
+                  }}
+                  title="切换美音 / 英音（仅切换，不自动播放）"
+                  className="rounded-md border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[11px] font-semibold text-slate-600 transition-colors hover:border-blue-300 hover:text-blue-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:border-blue-600 dark:hover:text-blue-300"
+                >
+                  {speechAccent === 'en-GB' ? '英' : '美'}
+                </button>
+                {formatPhoneticDisplay(result.phonetic) && (
                   <span className="font-mono text-xs text-slate-500 dark:text-slate-400">
-                    /{result.phonetic}/
+                    {formatPhoneticDisplay(result.phonetic)}
                   </span>
                 )}
               </div>
@@ -271,6 +304,15 @@ export const WordLookupPopover: React.FC<WordLookupPopoverProps> = ({
             </div>
           ) : result.found ? (
             <div className="space-y-2.5">
+              {result.context_zh && (
+                <div className="rounded-lg border border-emerald-200/80 bg-emerald-50/70 px-2.5 py-1.5 text-sm leading-snug text-emerald-900 dark:border-emerald-800/60 dark:bg-emerald-950/35 dark:text-emerald-200">
+                  <span className="text-xs font-semibold text-emerald-700 dark:text-emerald-300">
+                    本句意思：
+                  </span>
+                  <span className="font-medium">{result.context_zh}</span>
+                </div>
+              )}
+
               <p className="text-base leading-relaxed font-medium text-slate-800 dark:text-slate-100">
                 {result.meaning_zh}
               </p>

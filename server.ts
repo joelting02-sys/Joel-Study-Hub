@@ -17,6 +17,7 @@ import {
   saveTranslationConfig,
   translateWordWithApi,
 } from './server/translator.ts';
+import { fetchTtsAudio } from './server/tts.ts';
 
 function readCliArg(flag: string): string | undefined {
   const idx = process.argv.indexOf(flag);
@@ -165,6 +166,25 @@ async function startServer() {
     } catch (err) {
       const message = err instanceof Error ? err.message : '调用翻译接口失败';
       const statusCode = message.includes('尚未完成') ? 503 : 502;
+      res.status(statusCode).json({ error: message });
+    }
+  });
+
+  app.post('/api/tts', async (req, res) => {
+    try {
+      const { text, accent } = (req.body || {}) as { text?: unknown; accent?: unknown };
+      if (typeof text !== 'string' || !text.trim()) {
+        res.status(400).json({ error: '缺少待朗读的英文单词' });
+        return;
+      }
+      const audio = await fetchTtsAudio({
+        text,
+        accent: accent === 'en-GB' ? 'en-GB' : 'en-US',
+      });
+      res.json(audio);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '获取词典发音失败';
+      const statusCode = message.includes('缺少') ? 400 : 502;
       res.status(statusCode).json({ error: message });
     }
   });

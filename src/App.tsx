@@ -35,9 +35,16 @@ import { extractErrorMessage } from './lib/errors';
 import { formatDateYmd, getDueReviewWords, normalizeWordKey } from './lib/vocabLogic';
 import { mergeLookupEnrichment } from './lib/lookupHelpers';
 import {
+  hashSentence,
+  mergeVocabIntoLocalLookup,
+  PersistentTranslationCache,
+  shouldSkipAutoApiLookup,
+} from './lib/translationCache';
+import {
   WordLookupBehaviorContext,
   type WordClickPayload,
 } from './components/InteractiveText';
+import { SelectionToolbar } from './components/SelectionToolbar';
 import {
   WordLookupPopover,
   type ActiveLookupState,
@@ -68,6 +75,14 @@ function loadPreferences(): AppPreferences {
             : 'auto_fallback',
         autoAddTranslatedVocab: Boolean(parsed.autoAddTranslatedVocab),
         wordLookupTrigger: parsed.wordLookupTrigger === 'click' ? 'click' : 'hover',
+        speechAccent: parsed.speechAccent === 'en-GB' ? 'en-GB' : 'en-US',
+        speechRate:
+          parsed.speechRate === 0.75 ||
+          parsed.speechRate === 0.85 ||
+          parsed.speechRate === 1.15
+            ? parsed.speechRate
+            : 1,
+        speechEngine: parsed.speechEngine === 'offline_only' ? 'offline_only' : 'online_cached',
       };
     }
   } catch {
@@ -79,6 +94,9 @@ function loadPreferences(): AppPreferences {
     translationMode: 'auto_fallback',
     autoAddTranslatedVocab: false,
     wordLookupTrigger: 'hover',
+    speechAccent: 'en-US',
+    speechRate: 1,
+    speechEngine: 'online_cached',
   };
 }
 
@@ -103,7 +121,11 @@ export default function App() {
   const lookupSeqRef = useRef(0);
   const hoverCloseTimerRef = useRef<number | null>(null);
   const recentHoverCountsRef = useRef<Map<string, number>>(new Map());
-  const apiTranslateCacheRef = useRef<Map<string, LookupResult>>(new Map());
+  const persistentCacheRef = useRef<PersistentTranslationCache | null>(null);
+  if (!persistentCacheRef.current) {
+    persistentCacheRef.current = new PersistentTranslationCache();
+  }
+  const inFlightTranslateRef = useRef<Map<string, Promise<LookupResult>>>(new Map());
 
   const cancelHoverClose = useCallback(() => {
     if (hoverCloseTimerRef.current !== null) {
@@ -247,7 +269,42 @@ export default function App() {
     [],
   );
 
-  // 悬停或点击英文单词：先查本地词典，按设置自动调用翻译模型接口，并支持自动加入单词库
+  const recordExistingWordLookupCount = useCallback(
+    async (
+      finalResult: LookupResult,
+      payload: WordClickPayload,
+      trigger: 'hover' | 'click',
+      autoSaved: boolean,
+    ) => {
+      const existing = vocabLookupMap.get(normalizeWordKey(finalResult.word));
+      if (!existing || autoSaved) return;
+      const hoverCountKey = `${normalizeWordKey(existing.word)}|${payload.source}`;
+      const now = Date.now();
+      const lastHoverCountAt = recentHoverCountsRef.current.get(hoverCountKey) ?? 0;
+      const shouldCount = trigger === 'click' || now - lastHoverCountAt > 30_000;
+      if (!shouldCount) return;
+      if (trigger === 'hover') {
+        recentHoverCountsRef.current.set(hoverCountKey, now);
+      }
+      try {
+        const updated = await studyhubApi.addVocab({
+          word: existing.word,
+          meaning_zh: existing.meaning_zh || finalResult.meaning_zh,
+          phonetic: existing.phonetic || finalResult.phonetic,
+          pos: existing.pos || finalResult.pos,
+          context: payload.sentence,
+          source: payload.source,
+          subject: payload.subject,
+        });
+        setWords(updated.vocab.words);
+      } catch {
+        // 忽略后台计数失败，不影响展示
+      }
+    },
+    [vocabLookupMap],
+  );
+
+  // 悬停或点击英文单词：先查本地词典并融合 vocab.json，按策略调用翻译模型，并跨重启持久化缓存
   const handleWordClick = useCallback(
     async (payload: WordClickPayload) => {
       cancelHoverClose();
@@ -279,71 +336,80 @@ export default function App() {
 
       if (lookupSeqRef.current !== seq) return;
 
-      // 若本地词典未命中但单词库已有释义，优先回显已存释义
+      // 融合单词库已有释义与音标（解决本地词典缺音标及用户已保存释义未回显问题）
       const existingBeforeApi =
         vocabLookupMap.get(normalizeWordKey(result.word)) ||
         vocabLookupMap.get(normalizeWordKey(payload.surface));
-      if (!result.found && existingBeforeApi && existingBeforeApi.meaning_zh.trim()) {
-        result = {
-          ...result,
-          word: existingBeforeApi.word,
-          phonetic: existingBeforeApi.phonetic || result.phonetic,
-          pos: existingBeforeApi.pos || result.pos,
-          meaning_zh: existingBeforeApi.meaning_zh,
-          found: true,
-        };
-      }
+      result = mergeVocabIntoLocalLookup(result, existingBeforeApi);
 
       const apiConfigured = Boolean(translationStatus?.configured);
-      const cacheKey = `${translationStatus?.model || ''}|${(payload.matchedGlossaryKey || payload.surface).trim().toLowerCase()}|${payload.sentence.trim()}`;
-      const cachedApi = apiConfigured ? apiTranslateCacheRef.current.get(cacheKey) : undefined;
-      if (cachedApi && (preferences.translationMode === 'always_api' || (preferences.translationMode === 'auto_fallback' && !result.found))) {
-        const mergedCached = mergeLookupEnrichment(result, cachedApi);
-        setActiveLookup((prev) =>
-          prev
-            ? {
-                ...prev,
-                loading: false,
-                translatingApi: false,
-                result: mergedCached,
-              }
-            : null,
-        );
-        return;
-      }
+      const model = translationStatus?.model || '';
+      const targetSurface = payload.matchedGlossaryKey || payload.surface;
+      const cacheWordKey = normalizeWordKey(result.word || targetSurface);
+      const cache = persistentCacheRef.current!;
 
       const shouldCallApi =
-        apiConfigured &&
-        (preferences.translationMode === 'always_api' ||
-          (preferences.translationMode === 'auto_fallback' && !result.found));
+        apiConfigured && !shouldSkipAutoApiLookup(targetSurface, result, preferences.translationMode);
+
+      if (shouldCallApi) {
+        const cachedExact = cache.getExact(model, cacheWordKey, payload.sentence);
+        if (cachedExact) {
+          const mergedCached = mergeLookupEnrichment(result, cachedExact);
+          setActiveLookup((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  loading: false,
+                  translatingApi: false,
+                  result: mergedCached,
+                }
+              : null,
+          );
+          await recordExistingWordLookupCount(mergedCached, payload, trigger, false);
+          return;
+        }
+      }
+
+      const wordFallback = shouldCallApi ? cache.getWordFallback(model, cacheWordKey) : undefined;
+      const immediateResult = wordFallback ? mergeLookupEnrichment(result, wordFallback) : result;
+      const needBackgroundRefresh =
+        shouldCallApi && (!wordFallback || Boolean(payload.sentence.trim()));
 
       setActiveLookup((prev) =>
         prev
           ? {
               ...prev,
               loading: false,
-              translatingApi: shouldCallApi,
-              result,
+              translatingApi: needBackgroundRefresh,
+              result: immediateResult,
             }
           : null,
       );
 
-      let finalResult = result;
+      let finalResult = immediateResult;
       let autoSaved = false;
 
-      if (shouldCallApi) {
+      if (needBackgroundRefresh) {
+        const inflightKey = `${model}|${cacheWordKey}|${hashSentence(payload.sentence)}`;
         try {
-          const rawApiResult = await studyhubApi.translateWord({
-            surface: payload.matchedGlossaryKey || payload.surface,
-            sentence: payload.sentence,
-            subject: payload.subject,
-          });
-          if (lookupSeqRef.current !== seq) return;
-          if (apiTranslateCacheRef.current.size >= 300) {
-            const firstKey = apiTranslateCacheRef.current.keys().next().value;
-            if (firstKey) apiTranslateCacheRef.current.delete(firstKey);
+          let pending = inFlightTranslateRef.current.get(inflightKey);
+          if (!pending) {
+            pending = studyhubApi
+              .translateWord({
+                surface: targetSurface,
+                sentence: payload.sentence,
+                subject: payload.subject,
+              })
+              .finally(() => {
+                inFlightTranslateRef.current.delete(inflightKey);
+              });
+            inFlightTranslateRef.current.set(inflightKey, pending);
           }
-          apiTranslateCacheRef.current.set(cacheKey, rawApiResult);
+
+          const rawApiResult = await pending;
+          if (lookupSeqRef.current !== seq) return;
+
+          cache.set(model, cacheWordKey, payload.sentence, rawApiResult);
           const apiResult = mergeLookupEnrichment(result, rawApiResult);
           finalResult = apiResult;
 
@@ -393,33 +459,7 @@ export default function App() {
         }
       }
 
-      // 若该词已在单词库，查意思时自动把 lookup_count + 1（悬停模式 30 秒内同一词条仅计一次）
-      const existing = vocabLookupMap.get(normalizeWordKey(finalResult.word));
-      if (existing && !autoSaved) {
-        const hoverCountKey = `${normalizeWordKey(existing.word)}|${payload.source}`;
-        const now = Date.now();
-        const lastHoverCountAt = recentHoverCountsRef.current.get(hoverCountKey) ?? 0;
-        const shouldCount = trigger === 'click' || now - lastHoverCountAt > 30_000;
-        if (shouldCount) {
-          if (trigger === 'hover') {
-            recentHoverCountsRef.current.set(hoverCountKey, now);
-          }
-          try {
-            const updated = await studyhubApi.addVocab({
-              word: existing.word,
-              meaning_zh: existing.meaning_zh || finalResult.meaning_zh,
-              phonetic: existing.phonetic || finalResult.phonetic,
-              pos: existing.pos || finalResult.pos,
-              context: payload.sentence,
-              source: payload.source,
-              subject: payload.subject,
-            });
-            setWords(updated.vocab.words);
-          } catch {
-            // 忽略后台计数失败，不影响展示
-          }
-        }
-      }
+      await recordExistingWordLookupCount(finalResult, payload, trigger, autoSaved);
     },
     [
       cancelHoverClose,
@@ -428,6 +468,7 @@ export default function App() {
       translationStatus?.model,
       preferences.translationMode,
       preferences.autoAddTranslatedVocab,
+      recordExistingWordLookupCount,
     ],
   );
 
@@ -437,6 +478,10 @@ export default function App() {
     const seq = lookupSeqRef.current;
     const baseResult = activeLookup.result;
     const targetSurface = baseResult.surface || baseResult.word;
+    const model = translationStatus?.model || '';
+    const cacheWordKey = normalizeWordKey(baseResult.word || targetSurface);
+    persistentCacheRef.current?.deleteExact(model, cacheWordKey, activeLookup.sentence);
+
     setActiveLookup((prev) =>
       prev ? { ...prev, translatingApi: true, apiError: '', autoSaved: false } : null,
     );
@@ -447,8 +492,7 @@ export default function App() {
         subject: activeLookup.subject,
       });
       if (lookupSeqRef.current !== seq) return;
-      const cacheKey = `${translationStatus?.model || ''}|${targetSurface.trim().toLowerCase()}|${activeLookup.sentence.trim()}`;
-      apiTranslateCacheRef.current.set(cacheKey, rawApiResult);
+      persistentCacheRef.current?.set(model, cacheWordKey, activeLookup.sentence, rawApiResult);
       const apiResult = mergeLookupEnrichment(baseResult, rawApiResult);
 
       let autoSaved = false;
@@ -818,6 +862,9 @@ export default function App() {
                 words={words}
                 vocabLookupMap={vocabLookupMap}
                 translationConfigured={Boolean(translationStatus?.configured)}
+                speechAccent={preferences.speechAccent}
+                speechRate={preferences.speechRate}
+                speechEngine={preferences.speechEngine}
                 onWordClick={(p) => void handleWordClick(p)}
                 onLookupAndTranslate={handleLookupAndTranslate}
                 onAddVocab={handleAddVocab}
@@ -831,6 +878,10 @@ export default function App() {
                 words={words}
                 vocabLookupMap={vocabLookupMap}
                 fontScale={preferences.fontScale}
+                speechAccent={preferences.speechAccent}
+                speechRate={preferences.speechRate}
+                speechEngine={preferences.speechEngine}
+                isPopoverOpen={Boolean(activeLookup)}
                 onRecordReview={handleRecordReview}
                 onMarkWordStatus={(id, status) => handleUpdateWord(id, { status })}
                 onWordClick={(p) => void handleWordClick(p)}
@@ -877,12 +928,28 @@ export default function App() {
         )}
       </main>
 
+      {/* 全局划词朗读/翻译浮动工具条 */}
+      <SelectionToolbar
+        speechAccent={preferences.speechAccent}
+        speechRate={preferences.speechRate}
+        speechEngine={preferences.speechEngine}
+        onTranslateSelection={(p) => void handleWordClick(p)}
+      />
+
       {/* 全局查词翻译悬浮卡片 */}
       <WordLookupPopover
         lookup={activeLookup}
         existingEntry={existingPopoverEntry}
         translationConfigured={Boolean(translationStatus?.configured)}
         translationModel={translationStatus?.model}
+        speechAccent={preferences.speechAccent}
+        speechRate={preferences.speechRate}
+        speechEngine={preferences.speechEngine}
+        onToggleAccent={() =>
+          updatePreferences({
+            speechAccent: preferences.speechAccent === 'en-GB' ? 'en-US' : 'en-GB',
+          })
+        }
         onRequestApiTranslate={handleRequestApiTranslate}
         onSelectSynonym={(synonym) => {
           if (!activeLookup) return;

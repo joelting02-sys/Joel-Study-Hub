@@ -44,6 +44,18 @@ export function pickPreferredChatModel(models: string[]): string | undefined {
 }
 
 /**
+ * Format phonetic string cleanly without producing double slashes (`//...//`).
+ */
+export function formatPhoneticDisplay(raw?: string): string {
+  const trimmed = (raw || '').trim();
+  if (!trimmed) return '';
+  if (trimmed.includes('/')) {
+    return trimmed.replace(/\/{2,}/g, '/');
+  }
+  return `/${trimmed}/`;
+}
+
+/**
  * Merge local glossary/ECDICT details into an AI model result so syllabus
  * glossary terminology and phonetic info are preserved alongside rich senses.
  */
@@ -54,12 +66,18 @@ export function mergeLookupEnrichment(base: LookupResult, api: LookupResult): Lo
       .map((s) => s.trim())
       .filter(Boolean),
   );
+  const contextZh = api.context_zh?.trim() || undefined;
+  if (contextZh) {
+    meaningParts.add(contextZh);
+  }
 
   const mergedAlternatives: string[] = [];
   const pushAlt = (item: string) => {
     const trimmed = item.trim();
     if (!trimmed) return;
-    if (meaningParts.has(trimmed) || trimmed === api.meaning_zh.trim()) return;
+    if (meaningParts.has(trimmed) || trimmed === api.meaning_zh.trim() || trimmed === contextZh) {
+      return;
+    }
     if (!mergedAlternatives.includes(trimmed)) {
       mergedAlternatives.push(trimmed);
     }
@@ -80,6 +98,7 @@ export function mergeLookupEnrichment(base: LookupResult, api: LookupResult): Lo
 
   return {
     ...api,
+    context_zh: contextZh,
     phonetic: api.phonetic || base.phonetic,
     pos: api.pos || base.pos,
     alternatives: mergedAlternatives.slice(0, 6),

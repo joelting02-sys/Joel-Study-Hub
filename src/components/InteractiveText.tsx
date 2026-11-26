@@ -10,7 +10,7 @@ import { cleanToken, extractSentenceAt, segmentEnglishText } from '../lib/textTo
 import { normalizeWordKey } from '../lib/vocabLogic';
 import type { VocabEntry, WordLookupTrigger } from '../types/studyhub';
 
-const HOVER_OPEN_DELAY_MS = 140;
+const HOVER_OPEN_DELAY_MS = 240;
 
 export interface WordLookupBehaviorContextValue {
   triggerMode: WordLookupTrigger;

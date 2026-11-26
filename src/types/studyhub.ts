@@ -104,6 +104,8 @@ export interface LookupResult {
   phonetic: string;
   pos: string;
   meaning_zh: string;
+  /** 在当前原句中最贴切的中文意思 */
+  context_zh?: string;
   /** 更直观的大白话 / 通俗中文解释 */
   plain_zh?: string;
   /** 其他常见中文说法 / 近义译法 */
@@ -168,12 +170,30 @@ export type FontScale = 'normal' | 'large' | 'xlarge';
 
 export type WordLookupTrigger = 'hover' | 'click';
 
+export type SpeechAccent = 'en-US' | 'en-GB';
+export type SpeechRate = 0.75 | 0.85 | 1 | 1.15;
+export type SpeechEngine = 'online_cached' | 'offline_only';
+
+export interface TtsAudioInput {
+  text: string;
+  accent?: SpeechAccent;
+}
+
+export interface TtsAudioResult {
+  mime: string;
+  audioBase64: string;
+  cached: boolean;
+}
+
 export interface AppPreferences {
   theme: 'light' | 'dark';
   fontScale: FontScale;
   translationMode: TranslationMode;
   autoAddTranslatedVocab: boolean;
   wordLookupTrigger: WordLookupTrigger;
+  speechAccent: SpeechAccent;
+  speechRate: SpeechRate;
+  speechEngine: SpeechEngine;
 }
 
 export interface FolderStatus {
