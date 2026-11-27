@@ -177,12 +177,20 @@ function speakWithWebSpeech(
       }
 
       setState({ speakingKey: key, status: 'playing' });
+      let done = false;
+      let safetyTimer: number | undefined;
       const finish = () => {
+        if (done) return;
+        done = true;
+        if (safetyTimer !== undefined) {
+          window.clearTimeout(safetyTimer);
+        }
         if (seq === playSeq) {
           setState({ speakingKey: null, status: 'idle' });
         }
         resolve();
       };
+      safetyTimer = window.setTimeout(finish, Math.max(4000, Math.min(15000, text.length * 160)));
       utterance.onend = finish;
       utterance.onerror = finish;
       window.speechSynthesis.speak(utterance);

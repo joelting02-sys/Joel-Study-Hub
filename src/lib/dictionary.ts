@@ -259,6 +259,83 @@ function buildEcdictLookupResult(
 }
 
 /**
+ * Optimal String Alignment (Damerau-Levenshtein) distance for typo detection/suggestions.
+ */
+export function damerauLevenshtein(a: string, b: string): number {
+  const m = a.length;
+  const n = b.length;
+  if (m === 0) return n;
+  if (n === 0) return m;
+
+  const dp: number[][] = Array.from({ length: m + 1 }, () => new Array<number>(n + 1).fill(0));
+  for (let i = 0; i <= m; i++) dp[i][0] = i;
+  for (let j = 0; j <= n; j++) dp[0][j] = j;
+
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      let val = Math.min(
+        dp[i - 1][j] + 1,
+        dp[i][j - 1] + 1,
+        dp[i - 1][j - 1] + cost,
+      );
+      if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) {
+        val = Math.min(val, dp[i - 2][j - 2] + 1);
+      }
+      dp[i][j] = val;
+    }
+  }
+  return dp[m][n];
+}
+
+/**
+ * Suggest closest valid words from offline dictionary when an input token is not found.
+ */
+export function suggestSpelling(
+  rawSurface: string,
+  dictIndex: DictionaryIndex = DEFAULT_INDEX,
+  limit = 3,
+): string[] {
+  const trimmed = (rawSurface || '').trim();
+  if (!trimmed || trimmed.includes(' ')) return [];
+  const lower = cleanToken(trimmed).toLowerCase();
+  if (lower.length < 3 || lower.length > 32 || !/^[a-z][a-z-]*$/.test(lower)) {
+    return [];
+  }
+  if (dictIndex.byWord.has(lower) || dictIndex.inflectionToLemma.has(lower)) {
+    return [];
+  }
+
+  const maxDist = lower.length <= 5 ? 1 : 2;
+  const scored: Array<{ word: string; dist: number; firstMismatch: number; lenDiff: number }> = [];
+
+  for (const cand of dictIndex.byWord.keys()) {
+    if (cand.includes(' ')) continue;
+    const lenDiff = Math.abs(cand.length - lower.length);
+    if (lenDiff > maxDist) continue;
+    const dist = damerauLevenshtein(lower, cand);
+    if (dist > 0 && dist <= maxDist) {
+      scored.push({
+        word: dictIndex.byWord.get(cand)?.word || cand,
+        dist,
+        firstMismatch: cand[0] === lower[0] ? 0 : 1,
+        lenDiff,
+      });
+    }
+  }
+
+  scored.sort(
+    (a, b) =>
+      a.dist - b.dist ||
+      a.firstMismatch - b.firstMismatch ||
+      a.lenDiff - b.lenDiff ||
+      a.word.localeCompare(b.word),
+  );
+
+  return scored.slice(0, limit).map((s) => s.word);
+}
+
+/**
  * 执行点词翻译（严格遵守 4 级优先级）
  */
 export function lookupWord(rawSurface: string, options: LookupOptions = {}): LookupResult {
@@ -314,14 +391,17 @@ export function lookupWord(rawSurface: string, options: LookupOptions = {}): Loo
     }
   }
 
-  // 4. 找不到时返回「暂无释义」并允许手动输入中文意思
+  // 4. 找不到时返回「暂无释义」并给出拼写相似建议
+  const fallbackWord = cleanedSurface || rawSurface.trim();
+  const suggestions = suggestSpelling(fallbackWord, dictIndex, 3);
   return {
-    word: cleanedSurface || rawSurface.trim(),
-    surface: cleanedSurface || rawSurface.trim(),
+    word: fallbackWord,
+    surface: fallbackWord,
     phonetic: '',
     pos: '',
     meaning_zh: '',
     source: 'not_found',
+    ...(suggestions.length > 0 ? { suggestions } : {}),
     found: false,
   };
 }

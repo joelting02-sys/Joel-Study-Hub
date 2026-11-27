@@ -385,9 +385,27 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
         {/* 正面：英文单词 + 小播放键 + 音标 + 原句 */}
         <div className="mt-8 text-center">
           <div className="inline-flex items-center justify-center gap-2.5">
-            <h2 className="text-3xl font-bold tracking-tight text-slate-900 dark:text-slate-50">
-              {currentCard.word}
-            </h2>
+            {revealed ? (
+              <StudyWordButton
+                word={currentCard.word}
+                dataStudyWord={currentCard.word}
+                className="study-word cursor-pointer text-3xl font-bold tracking-tight text-slate-900 dark:text-slate-50"
+                onTrigger={(rect, trigger) =>
+                  onWordClick({
+                    surface: currentCard.word,
+                    sentence: currentCard.context,
+                    anchorRect: rect,
+                    source: currentCard.source || '每日复习',
+                    subject: currentCard.subject,
+                    trigger,
+                  })
+                }
+              />
+            ) : (
+              <h2 className="text-3xl font-bold tracking-tight text-slate-900 dark:text-slate-50">
+                {currentCard.word}
+              </h2>
+            )}
             <WordSpeakButton
               text={currentCard.word}
               accent={speechAccent}
@@ -428,12 +446,31 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
                     key={idx}
                     className="rounded bg-blue-100 px-1 py-0.5 font-semibold text-blue-900 dark:bg-blue-900/60 dark:text-blue-200"
                   >
-                    {part}
+                    {revealed ? (
+                      <StudyWordButton
+                        word={part}
+                        dataStudyWord={currentCard.word}
+                        className="study-word inline cursor-pointer text-left font-inherit align-baseline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                        onTrigger={(rect, trigger) =>
+                          onWordClick({
+                            surface: currentCard.word,
+                            sentence: currentCard.context,
+                            anchorRect: rect,
+                            source: currentCard.source || '每日复习',
+                            subject: currentCard.subject,
+                            trigger,
+                          })
+                        }
+                      />
+                    ) : (
+                      part
+                    )}
                   </mark>
                 ) : (
                   <InteractiveText
                     key={idx}
                     text={part}
+                    contextText={currentCard.context}
                     source={currentCard.source}
                     subject={currentCard.subject}
                     vocabLookupMap={vocabLookupMap}

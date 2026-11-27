@@ -3,6 +3,8 @@
  */
 
 import type { LookupResult } from '../types/studyhub';
+import { damerauLevenshtein } from './dictionary';
+import { cleanToken } from './textTokenize';
 
 export function isDedicatedTranslationModel(model: string): boolean {
   const lower = (model || '').trim().toLowerCase();
@@ -56,6 +58,43 @@ export function formatPhoneticDisplay(raw?: string): string {
 }
 
 /**
+ * Infer whether an unknown input token was silently spell-corrected by an LLM.
+ */
+export function inferTypoCorrection(
+  surface: string,
+  resolvedWord: string,
+  localFound: boolean,
+): string | undefined {
+  if (localFound) return undefined;
+  const cleanedSurface = cleanToken(surface) || (surface || '').trim();
+  const cleanedResolved = cleanToken(resolvedWord) || (resolvedWord || '').trim();
+  const sLower = cleanedSurface.toLowerCase();
+  const wLower = cleanedResolved.toLowerCase();
+  if (!sLower || !wLower || sLower === wLower) return undefined;
+  if (sLower.includes(' ') || wLower.includes(' ')) return undefined;
+
+  // Skip standard English morphological inflections
+  if (
+    sLower === `${wLower}s` ||
+    sLower === `${wLower}es` ||
+    sLower === `${wLower}ed` ||
+    sLower === `${wLower}ing` ||
+    sLower === `${wLower}er` ||
+    sLower === `${wLower}est` ||
+    (wLower.endsWith('y') &&
+      (sLower === `${wLower.slice(0, -1)}ies` || sLower === `${wLower.slice(0, -1)}ied`))
+  ) {
+    return undefined;
+  }
+
+  const maxDist = sLower.length <= 5 ? 1 : 2;
+  if (damerauLevenshtein(sLower, wLower) <= maxDist) {
+    return cleanedSurface;
+  }
+  return undefined;
+}
+
+/**
  * Merge local glossary/ECDICT details into an AI model result so syllabus
  * glossary terminology and phonetic info are preserved alongside rich senses.
  */
@@ -96,6 +135,15 @@ export function mergeLookupEnrichment(base: LookupResult, api: LookupResult): Lo
       ? base.meaning_zh.trim()
       : api.glossaryNote;
 
+  const correctedFrom =
+    api.correctedFrom?.trim() ||
+    inferTypoCorrection(base.surface || api.surface, api.word, base.found);
+
+  const rawSuggestions = api.suggestions ?? base.suggestions ?? [];
+  const filteredSuggestions = correctedFrom
+    ? []
+    : rawSuggestions.filter((s) => s.trim().toLowerCase() !== api.word.trim().toLowerCase());
+
   return {
     ...api,
     context_zh: contextZh,
@@ -103,5 +151,7 @@ export function mergeLookupEnrichment(base: LookupResult, api: LookupResult): Lo
     pos: api.pos || base.pos,
     alternatives: mergedAlternatives.slice(0, 6),
     glossaryNote,
+    ...(correctedFrom ? { correctedFrom } : {}),
+    ...(filteredSuggestions.length > 0 ? { suggestions: filteredSuggestions } : {}),
   };
 }

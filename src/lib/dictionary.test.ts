@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { cleanToken, extractSentenceAt, segmentEnglishText } from './textTokenize';
-import { condenseMeaningZh, lookupWord } from './dictionary';
+import { condenseMeaningZh, damerauLevenshtein, lookupWord, suggestSpelling } from './dictionary';
 
 test('cleanToken removes surrounding punctuation and possessives', () => {
   assert.equal(cleanToken("competitors'"), 'competitors');
@@ -103,4 +103,21 @@ test('lookupWord enriches glossary match with ECDICT phonetic and alternative me
   assert.equal(res.meaning_zh, '利益相关者');
   assert.ok(res.phonetic.length > 0);
   assert.ok(res.alternatives && res.alternatives.includes('股东'));
+});
+
+test('damerauLevenshtein and suggestSpelling suggest close corrections for typos', () => {
+  assert.equal(damerauLevenshtein('stakeholder', 'stakholder'), 1);
+  assert.equal(damerauLevenshtein('form', 'from'), 1);
+
+  const s1 = suggestSpelling('stakholder');
+  assert.ok(s1.includes('stakeholder'));
+
+  const s2 = suggestSpelling('competior');
+  assert.ok(s2.includes('competitor'));
+
+  assert.deepEqual(suggestSpelling('stakeholder'), []);
+
+  const notFound = lookupWord('stakholder');
+  assert.equal(notFound.found, false);
+  assert.ok(notFound.suggestions && notFound.suggestions.includes('stakeholder'));
 });

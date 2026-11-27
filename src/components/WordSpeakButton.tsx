@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Loader2, Play, Volume2 } from 'lucide-react';
+import { Play, Volume2 } from 'lucide-react';
 import {
   getSpeechState,
   makeSpeechKey,
@@ -34,8 +34,6 @@ export const WordSpeakButton: React.FC<WordSpeakButtonProps> = ({
 
   const myKey = makeSpeechKey(text, accent);
   const isActive = speechState.speakingKey === myKey && speechState.status !== 'idle';
-  const isLoading = isActive && speechState.status === 'loading';
-  const isPlaying = isActive && speechState.status === 'playing';
 
   const dimClass = size === 'sm' ? 'h-7 w-7' : 'h-6 w-6';
   const iconClass = size === 'sm' ? 'h-3.5 w-3.5' : 'h-3 w-3';
@@ -61,10 +59,8 @@ export const WordSpeakButton: React.FC<WordSpeakButtonProps> = ({
           : 'border-slate-200 bg-slate-50 text-slate-600 hover:border-blue-300 hover:bg-blue-50 hover:text-blue-600 dark:border-slate-700 dark:bg-slate-800/80 dark:text-slate-300 dark:hover:border-blue-600 dark:hover:bg-blue-950/50 dark:hover:text-blue-300'
       } ${className}`}
     >
-      {isLoading ? (
-        <Loader2 className={`${iconClass} animate-spin`} />
-      ) : isPlaying ? (
-        <Volume2 className={`${iconClass} animate-pulse`} />
+      {isActive ? (
+        <Volume2 className={iconClass} />
       ) : (
         <Play className={`${iconClass} translate-x-[0.5px] fill-current`} />
       )}

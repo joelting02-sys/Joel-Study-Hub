@@ -114,7 +114,15 @@ export const studyhubApi = {
 
   updateVocab(
     id: string,
-    patch: { meaning_zh?: string; status?: VocabStatus; subject?: string; context?: string },
+    patch: {
+      word?: string;
+      meaning_zh?: string;
+      phonetic?: string;
+      pos?: string;
+      status?: VocabStatus;
+      subject?: string;
+      context?: string;
+    },
   ): Promise<VocabFile> {
     if (isTauriDesktop()) return invoke<VocabFile>('update_vocab', { id, patch });
     return requestJson<VocabFile>(`/api/vocab/${encodeURIComponent(id)}`, {
@@ -331,7 +339,7 @@ export const studyhubApi = {
   async getUpdateState(): Promise<AppUpdateState> {
     if (isTauriDesktop()) return invoke<AppUpdateState>('get_update_state');
     return {
-      currentVersion: '1.0.10',
+      currentVersion: '1.0.11',
       isPackaged: false,
       isPortable: false,
       supported: false,

@@ -350,7 +350,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               软件更新
             </h2>
             <span className="font-mono text-xs text-slate-500 dark:text-slate-400">
-              当前版本 v{updateState?.currentVersion || '1.0.10'}
+              当前版本 v{updateState?.currentVersion || '1.0.11'}
             </span>
           </div>
 

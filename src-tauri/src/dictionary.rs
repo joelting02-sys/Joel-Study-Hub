@@ -323,6 +323,95 @@ fn build_ecdict_result(
     }
 }
 
+/// Optimal String Alignment (Damerau-Levenshtein) distance for typo suggestions.
+pub fn damerau_levenshtein(a: &str, b: &str) -> usize {
+    let ac: Vec<char> = a.chars().collect();
+    let bc: Vec<char> = b.chars().collect();
+    let m = ac.len();
+    let n = bc.len();
+    if m == 0 {
+        return n;
+    }
+    if n == 0 {
+        return m;
+    }
+
+    let mut dp = vec![vec![0usize; n + 1]; m + 1];
+    for (i, row) in dp.iter_mut().enumerate() {
+        row[0] = i;
+    }
+    for (j, cell) in dp[0].iter_mut().enumerate() {
+        *cell = j;
+    }
+
+    for i in 1..=m {
+        for j in 1..=n {
+            let cost = if ac[i - 1] == bc[j - 1] { 0 } else { 1 };
+            let mut val = (dp[i - 1][j] + 1)
+                .min(dp[i][j - 1] + 1)
+                .min(dp[i - 1][j - 1] + cost);
+            if i > 1 && j > 1 && ac[i - 1] == bc[j - 2] && ac[i - 2] == bc[j - 1] {
+                val = val.min(dp[i - 2][j - 2] + 1);
+            }
+            dp[i][j] = val;
+        }
+    }
+    dp[m][n]
+}
+
+/// Suggest closest valid words from offline dictionary when an input token is not found.
+pub fn suggest_spelling(raw_surface: &str, index: &DictionaryIndex, limit: usize) -> Vec<String> {
+    let trimmed = raw_surface.trim();
+    if trimmed.is_empty() || trimmed.contains(' ') {
+        return Vec::new();
+    }
+    let lower = clean_token(trimmed).to_lowercase();
+    let len = lower.len();
+    if !(3..=32).contains(&len)
+        || !lower
+            .bytes()
+            .enumerate()
+            .all(|(idx, b)| b.is_ascii_lowercase() || (idx > 0 && b == b'-'))
+    {
+        return Vec::new();
+    }
+    if index.by_word.contains_key(&lower) || index.inflection_to_lemma.contains_key(&lower) {
+        return Vec::new();
+    }
+
+    let max_dist = if len <= 5 { 1 } else { 2 };
+    let first_byte = lower.as_bytes()[0];
+    let mut scored: Vec<(usize, u8, usize, String)> = Vec::new();
+
+    for (cand, rec) in &index.by_word {
+        if cand.contains(' ') {
+            continue;
+        }
+        let len_diff = cand.len().abs_diff(len);
+        if len_diff > max_dist {
+            continue;
+        }
+        let dist = damerau_levenshtein(&lower, cand);
+        if dist > 0 && dist <= max_dist {
+            let first_mismatch = if cand.as_bytes().first().copied() == Some(first_byte) {
+                0
+            } else {
+                1
+            };
+            scored.push((dist, first_mismatch, len_diff, rec.word.clone()));
+        }
+    }
+
+    scored.sort_by(|a, b| {
+        a.0.cmp(&b.0)
+            .then_with(|| a.1.cmp(&b.1))
+            .then_with(|| a.2.cmp(&b.2))
+            .then_with(|| a.3.cmp(&b.3))
+    });
+
+    scored.into_iter().take(limit).map(|item| item.3).collect()
+}
+
 /// 严格按 4 级优先级执行点词查义（与 TypeScript lookupWord 100% 行为一致）
 pub fn lookup_word(
     raw_surface: &str,
@@ -382,10 +471,12 @@ pub fn lookup_word(
     } else {
         cleaned_surface
     };
+    let suggestions = suggest_spelling(&fallback_word, index, 3);
     LookupResult {
         word: fallback_word.clone(),
         surface: fallback_word,
         source: "not_found".to_string(),
+        suggestions,
         found: false,
         ..Default::default()
     }
@@ -451,5 +542,21 @@ mod tests {
         assert_eq!(res.meaning_zh, "利益相关者");
         assert!(!res.phonetic.is_empty());
         assert!(res.alternatives.iter().any(|s| s == "股东"));
+    }
+
+    #[test]
+    fn damerau_levenshtein_and_spelling_suggestions_work() {
+        assert_eq!(damerau_levenshtein("stakeholder", "stakholder"), 1);
+        assert_eq!(damerau_levenshtein("form", "from"), 1);
+        assert_eq!(damerau_levenshtein("competitor", "competior"), 1);
+
+        let index = build_dictionary_index(load_builtin_records());
+        let s1 = suggest_spelling("stakholder", &index, 3);
+        assert!(s1.iter().any(|w| w.eq_ignore_ascii_case("stakeholder")));
+
+        let s2 = suggest_spelling("competior", &index, 3);
+        assert!(s2.iter().any(|w| w.eq_ignore_ascii_case("competitor")));
+
+        assert!(suggest_spelling("stakeholder", &index, 3).is_empty());
     }
 }

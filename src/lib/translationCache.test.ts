@@ -7,7 +7,7 @@ import {
   shouldSkipAutoApiLookup,
   type StorageLike,
 } from './translationCache';
-import { formatPhoneticDisplay } from './lookupHelpers';
+import { formatPhoneticDisplay, inferTypoCorrection, mergeLookupEnrichment } from './lookupHelpers';
 import type { LookupResult, VocabEntry } from '../types/studyhub';
 
 function createMemoryStorage(): StorageLike {
@@ -146,4 +146,33 @@ test('PersistentTranslationCache persists across instances, isolates models, and
 
   cache2.deleteExact('model-a', 'margin', 'Profit margin improved this quarter.');
   assert.equal(cache2.getExact('model-a', 'margin', 'Profit margin improved this quarter.'), undefined);
+});
+
+test('inferTypoCorrection detects misspelled inputs while skipping valid inflections', () => {
+  assert.equal(inferTypoCorrection('stakholder', 'stakeholder', false), 'stakholder');
+  assert.equal(inferTypoCorrection('stakeholders', 'stakeholder', false), undefined);
+  assert.equal(inferTypoCorrection('stakeholder', 'stakeholder', true), undefined);
+
+  const baseNotFound: LookupResult = {
+    word: 'stakholder',
+    surface: 'stakholder',
+    phonetic: '',
+    pos: '',
+    meaning_zh: '',
+    source: 'not_found',
+    suggestions: ['stakeholder'],
+    found: false,
+  };
+  const apiCorrected: LookupResult = {
+    word: 'stakeholder',
+    surface: 'stakholder',
+    phonetic: 'ˈsteɪkhəʊldə(r)',
+    pos: 'n.',
+    meaning_zh: '利益相关者',
+    source: 'api',
+    found: true,
+  };
+  const merged = mergeLookupEnrichment(baseNotFound, apiCorrected);
+  assert.equal(merged.correctedFrom, 'stakholder');
+  assert.equal(merged.suggestions, undefined);
 });

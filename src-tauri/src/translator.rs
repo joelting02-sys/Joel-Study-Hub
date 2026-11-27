@@ -665,6 +665,7 @@ pub fn parse_translation_payload(
     }
 
     let mut word = cleaned_surface.clone();
+    let mut corrected_from = String::new();
     let mut phonetic = String::new();
     let mut pos = String::new();
     let mut context_zh = String::new();
@@ -677,6 +678,19 @@ pub fn parse_translation_payload(
         let w = pick_str(&map, &["word", "lemma", "base_form"]);
         if !w.is_empty() {
             word = w;
+        }
+        corrected_from = pick_str(
+            &map,
+            &[
+                "corrected_from",
+                "correctedFrom",
+                "typo_from",
+                "typoFrom",
+                "original_typo",
+            ],
+        );
+        if corrected_from.eq_ignore_ascii_case(&word) {
+            corrected_from.clear();
         }
         phonetic = pick_str(&map, &["phonetic", "ipa"])
             .trim_matches('/')
@@ -779,6 +793,11 @@ pub fn parse_translation_payload(
         synonyms,
         source: "api".to_string(),
         lemma_note,
+        corrected_from: if corrected_from.is_empty() {
+            None
+        } else {
+            Some(corrected_from)
+        },
         found: true,
         ..Default::default()
     })
@@ -941,7 +960,7 @@ pub async fn translate_word_with_api(
             json!([
                 {
                     "role": "system",
-                    "content": "英汉学习词典。只返回合法JSON：{\"word\":\"词原形或短语\",\"phonetic\":\"音标(无斜杠)\",\"pos\":\"词性\",\"context_zh\":\"在当前原句中最贴切的一句话中文意思(无原句可留空)\",\"meaning_zh\":\"2-4个核心中文义项，；分隔\",\"plain_zh\":\"一句大白话通俗解释\",\"alternatives\":[\"2-3个直观中文说法\"],\"synonyms\":[\"2-3个英文同义词\"]}"
+                    "content": "英汉学习词典。先检查输入英文有无拼写错误：若拼错必须在word中纠正为标准拼写并在corrected_from填原错词，无错则corrected_from留空。只返回合法JSON：{\"word\":\"正确词原形或短语\",\"corrected_from\":\"原错拼词(无错留空)\",\"phonetic\":\"音标(无斜杠)\",\"pos\":\"词性\",\"context_zh\":\"当前原句中文译义(无原句留空)\",\"meaning_zh\":\"2-4个核心中文义项，；分隔\",\"plain_zh\":\"一句大白话通俗解释\",\"alternatives\":[\"2-3个直观中文说法\"],\"synonyms\":[\"2-3个英文同义词\"]}"
                 },
                 {
                     "role": "user",
@@ -1064,12 +1083,13 @@ mod tests {
         let rich_chat_resp = json!({
             "choices": [{
                 "message": {
-                    "content": "{\"word\":\"stakeholder\",\"phonetic\":\"ˈsteɪkhəʊldə(r)\",\"pos\":\"n.\",\"context_zh\":\"企业利益相关方\",\"meaning_zh\":\"利益相关者；干系人\",\"plain_zh\":\"跟企业或项目有利害关系的人（如股东、员工、客户）\",\"alternatives\":[\"股东\",\"利益方\",\"相关方\",\"企业利益相关方\"],\"synonyms\":[\"shareholder\",\"interested party\",\"stakeholder\"]}"
+                    "content": "{\"word\":\"stakeholder\",\"corrected_from\":\"stakholder\",\"phonetic\":\"ˈsteɪkhəʊldə(r)\",\"pos\":\"n.\",\"context_zh\":\"企业利益相关方\",\"meaning_zh\":\"利益相关者；干系人\",\"plain_zh\":\"跟企业或项目有利害关系的人（如股东、员工、客户）\",\"alternatives\":[\"股东\",\"利益方\",\"相关方\",\"企业利益相关方\"],\"synonyms\":[\"shareholder\",\"interested party\",\"stakeholder\"]}"
                 }
             }]
         });
-        let rich = parse_translation_payload(&rich_chat_resp, "stakeholders").unwrap();
+        let rich = parse_translation_payload(&rich_chat_resp, "stakholder").unwrap();
         assert_eq!(rich.word, "stakeholder");
+        assert_eq!(rich.corrected_from.as_deref(), Some("stakholder"));
         assert_eq!(rich.context_zh.as_deref(), Some("企业利益相关方"));
         assert_eq!(
             rich.plain_zh.as_deref(),

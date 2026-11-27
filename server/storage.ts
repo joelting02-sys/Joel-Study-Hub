@@ -415,10 +415,29 @@ export class StudyHubStorage extends EventEmitter {
 
   public updateVocab(
     id: string,
-    patch: { meaning_zh?: string; status?: VocabStatus; subject?: string; context?: string },
+    patch: {
+      word?: string;
+      meaning_zh?: string;
+      phonetic?: string;
+      pos?: string;
+      status?: VocabStatus;
+      subject?: string;
+      context?: string;
+    },
   ): VocabFile {
     const current = this.readVocabFile();
     let words = current.words;
+
+    if (patch.word !== undefined) {
+      const trimmed = patch.word.trim();
+      if (!trimmed) {
+        throw new Error('英文单词不能为空');
+      }
+      const newKey = normalizeWordKey(trimmed);
+      if (words.some((w) => w.id !== id && normalizeWordKey(w.word) === newKey)) {
+        throw new Error(`单词库中已存在「${trimmed}」`);
+      }
+    }
 
     if (patch.status) {
       words = markWordStatus(words, id, patch.status);
@@ -428,7 +447,10 @@ export class StudyHubStorage extends EventEmitter {
       if (w.id !== id) return w;
       return {
         ...w,
+        word: patch.word !== undefined ? patch.word.trim() : w.word,
         meaning_zh: patch.meaning_zh !== undefined ? patch.meaning_zh.trim() : w.meaning_zh,
+        phonetic: patch.phonetic !== undefined ? patch.phonetic.trim() : w.phonetic,
+        pos: patch.pos !== undefined ? patch.pos.trim() : w.pos,
         subject: patch.subject !== undefined ? normalizeSubject(patch.subject) : w.subject,
         context: patch.context !== undefined ? patch.context.trim() : w.context,
       };

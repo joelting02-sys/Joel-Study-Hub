@@ -541,7 +541,7 @@ export default function App() {
     }
   }, [activeLookup, vocabLookupMap, translationStatus?.model, preferences.autoAddTranslatedVocab]);
 
-  // 供单词库快速查词与单条重译复用
+  // 供单词库快速查词与单条重译复用（始终先查离线词典以提供拼写纠错参考，再按需调用翻译模型）
   const handleLookupAndTranslate = useCallback(
     async (payload: {
       surface: string;
@@ -549,25 +549,38 @@ export default function App() {
       subject?: string;
       preferApi?: boolean;
     }): Promise<LookupResult> => {
-      if (payload.preferApi && translationStatus?.configured) {
-        return studyhubApi.translateWord({
-          surface: payload.surface,
-          sentence: payload.sentence,
-          subject: payload.subject,
-        });
-      }
       const localRes = await studyhubApi.lookup(payload.surface);
-      if (
-        translationStatus?.configured &&
-        (preferences.translationMode === 'always_api' || !localRes.found)
-      ) {
-        return studyhubApi.translateWord({
-          surface: payload.surface,
-          sentence: payload.sentence,
-          subject: payload.subject,
-        });
+      const shouldUseApi =
+        Boolean(translationStatus?.configured) &&
+        (Boolean(payload.preferApi) ||
+          preferences.translationMode === 'always_api' ||
+          !localRes.found);
+
+      if (!shouldUseApi) {
+        return localRes;
       }
-      return localRes;
+
+      const apiRes = await studyhubApi.translateWord({
+        surface: payload.surface,
+        sentence: payload.sentence,
+        subject: payload.subject,
+      });
+      let merged = mergeLookupEnrichment(localRes, apiRes);
+      if (merged.word.trim().toLowerCase() !== localRes.word.trim().toLowerCase()) {
+        try {
+          const correctedLocal = await studyhubApi.lookup(merged.word);
+          if (correctedLocal.found) {
+            merged = {
+              ...merged,
+              phonetic: merged.phonetic || correctedLocal.phonetic,
+              pos: merged.pos || correctedLocal.pos,
+            };
+          }
+        } catch {
+          // 忽略补充离线词典失败
+        }
+      }
+      return merged;
     },
     [translationStatus?.configured, preferences.translationMode],
   );
@@ -575,7 +588,14 @@ export default function App() {
   const handleUpdateWord = useCallback(
     async (
       id: string,
-      patch: { meaning_zh?: string; status?: VocabStatus; subject?: string },
+      patch: {
+        word?: string;
+        meaning_zh?: string;
+        phonetic?: string;
+        pos?: string;
+        status?: VocabStatus;
+        subject?: string;
+      },
     ) => {
       const updated = await studyhubApi.updateVocab(id, patch);
       setWords(updated.words);

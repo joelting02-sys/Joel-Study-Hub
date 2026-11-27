@@ -58,7 +58,14 @@ interface VocabViewProps {
   }) => Promise<void>;
   onUpdateWord: (
     id: string,
-    patch: { meaning_zh?: string; status?: VocabStatus; subject?: string },
+    patch: {
+      word?: string;
+      meaning_zh?: string;
+      phonetic?: string;
+      pos?: string;
+      status?: VocabStatus;
+      subject?: string;
+    },
   ) => Promise<void>;
   onDeleteWord: (id: string) => Promise<void>;
 }
@@ -152,6 +159,7 @@ export const VocabView: React.FC<VocabViewProps> = ({
   const [sortBy, setSortBy] = useState<'added_desc' | 'lookup_desc'>('added_desc');
 
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingWord, setEditingWord] = useState('');
   const [editingMeaning, setEditingMeaning] = useState('');
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [translatingRowId, setTranslatingRowId] = useState<string | null>(null);
@@ -163,6 +171,7 @@ export const VocabView: React.FC<VocabViewProps> = ({
   const [quickLoading, setQuickLoading] = useState(false);
   const [quickSaving, setQuickSaving] = useState(false);
   const [quickResult, setQuickResult] = useState<LookupResult | null>(null);
+  const [quickWordDraft, setQuickWordDraft] = useState('');
   const [quickManualMeaning, setQuickManualMeaning] = useState('');
   const [quickError, setQuickError] = useState('');
   const [quickSavedNotice, setQuickSavedNotice] = useState('');
@@ -196,13 +205,25 @@ export const VocabView: React.FC<VocabViewProps> = ({
 
   const startEdit = (entry: VocabEntry) => {
     setEditingId(entry.id);
+    setEditingWord(entry.word);
     setEditingMeaning(entry.meaning_zh);
     setConfirmDeleteId(null);
+    setRowError('');
   };
 
   const saveEdit = async (id: string) => {
-    await onUpdateWord(id, { meaning_zh: editingMeaning });
-    setEditingId(null);
+    const trimmedWord = editingWord.trim();
+    if (!trimmedWord) {
+      setRowError('英文单词不能为空');
+      return;
+    }
+    setRowError('');
+    try {
+      await onUpdateWord(id, { word: trimmedWord, meaning_zh: editingMeaning });
+      setEditingId(null);
+    } catch (err) {
+      setRowError(extractErrorMessage(err, '保存修改失败'));
+    }
   };
 
   const handleRowTranslate = async (entry: VocabEntry) => {
@@ -227,14 +248,17 @@ export const VocabView: React.FC<VocabViewProps> = ({
     }
   };
 
-  const handleQuickLookup = async (e: React.FormEvent, preferApi = false) => {
-    e.preventDefault();
-    const cleaned = quickWord.trim();
+  const runQuickLookup = async (
+    targetWord: string,
+    preferApi = false,
+  ) => {
+    const cleaned = targetWord.trim();
     if (!cleaned) return;
     setQuickLoading(true);
     setQuickError('');
     setQuickSavedNotice('');
     setQuickResult(null);
+    setQuickWordDraft('');
     setQuickManualMeaning('');
     try {
       const res = await onLookupAndTranslate({
@@ -244,6 +268,7 @@ export const VocabView: React.FC<VocabViewProps> = ({
         preferApi,
       });
       setQuickResult(res);
+      setQuickWordDraft(res.word || cleaned);
       if (res.found) {
         setQuickManualMeaning(res.meaning_zh);
       }
@@ -254,9 +279,19 @@ export const VocabView: React.FC<VocabViewProps> = ({
     }
   };
 
+  const handleQuickLookup = async (e: React.FormEvent, preferApi = false) => {
+    e.preventDefault();
+    await runQuickLookup(quickWord, preferApi);
+  };
+
   const handleQuickAdd = async () => {
     if (!quickResult) return;
+    const finalWord = quickWordDraft.trim() || quickResult.word;
     const finalMeaning = quickManualMeaning.trim() || quickResult.meaning_zh.trim();
+    if (!finalWord) {
+      setQuickError('英文单词不能为空');
+      return;
+    }
     if (!finalMeaning) {
       setQuickError('请先输入或翻译出中文释义再加入单词库');
       return;
@@ -265,7 +300,7 @@ export const VocabView: React.FC<VocabViewProps> = ({
     setQuickError('');
     try {
       await onAddVocab({
-        word: quickResult.word,
+        word: finalWord,
         meaning_zh: finalMeaning,
         phonetic: quickResult.phonetic || '',
         pos: quickResult.pos || '',
@@ -273,10 +308,11 @@ export const VocabView: React.FC<VocabViewProps> = ({
         source: '单词库快速查词',
         subject: subject === 'ALL' ? '其他' : subject,
       });
-      setQuickSavedNotice(`已将「${quickResult.word}」加入单词库`);
+      setQuickSavedNotice(`已将「${finalWord}」加入单词库`);
       setQuickWord('');
       setQuickContext('');
       setQuickResult(null);
+      setQuickWordDraft('');
       setQuickManualMeaning('');
     } catch (err) {
       setQuickError(extractErrorMessage(err, '保存单词失败'));
@@ -356,10 +392,10 @@ export const VocabView: React.FC<VocabViewProps> = ({
             <div className="flex flex-wrap items-baseline justify-between gap-2">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="text-base font-bold text-slate-900 dark:text-slate-50">
-                  {quickResult.word}
+                  {quickWordDraft || quickResult.word}
                 </span>
                 <WordSpeakButton
-                  text={quickResult.word}
+                  text={quickWordDraft || quickResult.word}
                   accent={speechAccent}
                   rate={speechRate}
                   engine={speechEngine}
@@ -392,7 +428,54 @@ export const VocabView: React.FC<VocabViewProps> = ({
               )}
             </div>
 
+            {quickResult.correctedFrom && (
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-emerald-200 bg-emerald-50/70 px-3 py-1.5 text-xs text-emerald-900 dark:border-emerald-800/60 dark:bg-emerald-950/35 dark:text-emerald-200">
+                <span>
+                  检测到拼写有误，已自动纠正：
+                  <span className="mx-1 line-through opacity-70">{quickResult.correctedFrom}</span>→
+                  <strong className="ml-1 font-mono">{quickResult.word}</strong>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setQuickWordDraft(quickResult.correctedFrom || quickResult.surface)}
+                  className="font-medium text-emerald-700 underline hover:text-emerald-900 dark:text-emerald-300"
+                >
+                  仍按原拼写
+                </button>
+              </div>
+            )}
+
+            {quickResult.suggestions && quickResult.suggestions.length > 0 && (
+              <div className="flex flex-wrap items-center gap-1.5 rounded-lg border border-amber-200 bg-amber-50/80 px-3 py-2 text-xs text-amber-900 dark:border-amber-800/60 dark:bg-amber-950/35 dark:text-amber-200">
+                <span>
+                  拼写提醒：词典未收录「<span className="font-mono">{quickResult.surface}</span>」，你是不是想查：
+                </span>
+                {quickResult.suggestions.map((sug) => (
+                  <button
+                    key={sug}
+                    type="button"
+                    disabled={quickLoading}
+                    onClick={() => {
+                      setQuickWord(sug);
+                      void runQuickLookup(sug, false);
+                    }}
+                    className="rounded-md border border-amber-300 bg-white px-2 py-0.5 font-mono font-semibold text-amber-900 transition-colors hover:bg-amber-100 dark:border-amber-700 dark:bg-slate-900 dark:text-amber-200 dark:hover:bg-slate-800"
+                  >
+                    {sug}
+                  </button>
+                ))}
+              </div>
+            )}
+
             <div className="flex flex-col gap-2 sm:flex-row">
+              <input
+                type="text"
+                aria-label="确认或修改英文拼写"
+                value={quickWordDraft}
+                onChange={(e) => setQuickWordDraft(e.target.value)}
+                placeholder="英文单词拼写…"
+                className="sm:w-44 rounded-lg border border-slate-300 bg-white px-3 py-1.5 font-mono text-sm text-slate-900 focus:border-blue-500 focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+              />
               <input
                 type="text"
                 aria-label="确认或修改中文释义"
@@ -403,7 +486,7 @@ export const VocabView: React.FC<VocabViewProps> = ({
               />
               <button
                 type="button"
-                disabled={quickSaving || !quickManualMeaning.trim()}
+                disabled={quickSaving || !quickManualMeaning.trim() || !quickWordDraft.trim()}
                 onClick={() => void handleQuickAdd()}
                 className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-emerald-600 px-4 py-1.5 text-sm font-semibold text-white transition-colors hover:bg-emerald-700 disabled:opacity-50 whitespace-nowrap dark:bg-emerald-500 dark:hover:bg-emerald-600"
               >
@@ -586,6 +669,18 @@ export const VocabView: React.FC<VocabViewProps> = ({
                     <div className="flex flex-wrap items-center gap-2">
                       <input
                         type="text"
+                        aria-label={`编辑 ${item.word} 的英文拼写`}
+                        value={editingWord}
+                        onChange={(e) => setEditingWord(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') void saveEdit(item.id);
+                          if (e.key === 'Escape') setEditingId(null);
+                        }}
+                        placeholder="英文拼写"
+                        className="w-44 rounded-lg border border-blue-400 bg-white px-3 py-1.5 font-mono text-sm text-slate-900 focus:outline-none dark:border-blue-500 dark:bg-slate-900 dark:text-slate-100"
+                      />
+                      <input
+                        type="text"
                         aria-label={`编辑 ${item.word} 的中文意思`}
                         value={editingMeaning}
                         onChange={(e) => setEditingMeaning(e.target.value)}
@@ -593,6 +688,7 @@ export const VocabView: React.FC<VocabViewProps> = ({
                           if (e.key === 'Enter') void saveEdit(item.id);
                           if (e.key === 'Escape') setEditingId(null);
                         }}
+                        placeholder="中文释义"
                         className="w-full max-w-md rounded-lg border border-blue-400 bg-white px-3 py-1.5 text-sm text-slate-900 focus:outline-none dark:border-blue-500 dark:bg-slate-900 dark:text-slate-100"
                       />
                       <button

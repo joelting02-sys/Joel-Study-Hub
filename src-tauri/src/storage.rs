@@ -8,7 +8,7 @@ use crate::models::{
 };
 use crate::vocab::{
     add_or_increment_vocab, calculate_next_review, export_vocab_to_markdown, format_today_ymd,
-    mark_word_status, merge_inbox_words, normalize_subject,
+    mark_word_status, merge_inbox_words, normalize_subject, normalize_word_key,
 };
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -428,13 +428,36 @@ impl StudyHubStorage {
         patch: &UpdateVocabPatch,
     ) -> Result<VocabFile, String> {
         let mut current = self.read_vocab_file();
+        if let Some(raw_word) = &patch.word {
+            let trimmed = raw_word.trim();
+            if trimmed.is_empty() {
+                return Err("英文单词不能为空".to_string());
+            }
+            let new_key = normalize_word_key(trimmed);
+            if current
+                .words
+                .iter()
+                .any(|w| w.id != id && normalize_word_key(&w.word) == new_key)
+            {
+                return Err(format!("单词库中已存在「{trimmed}」"));
+            }
+        }
         if let Some(status) = patch.status.as_deref() {
             mark_word_status(&mut current.words, id, status);
         }
         for w in current.words.iter_mut() {
             if w.id == id {
+                if let Some(word) = &patch.word {
+                    w.word = word.trim().to_string();
+                }
                 if let Some(m) = &patch.meaning_zh {
                     w.meaning_zh = m.trim().to_string();
+                }
+                if let Some(p) = &patch.phonetic {
+                    w.phonetic = p.trim().to_string();
+                }
+                if let Some(pos) = &patch.pos {
+                    w.pos = pos.trim().to_string();
                 }
                 if let Some(s) = &patch.subject {
                     w.subject = normalize_subject(Some(s));

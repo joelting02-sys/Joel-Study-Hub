@@ -117,6 +117,10 @@ export interface LookupResult {
   source: LookupSource;
   /** 词形还原说明，如 "went → go" */
   lemmaNote?: string;
+  /** 若自动纠正了拼写错误，记录原错拼词 */
+  correctedFrom?: string;
+  /** 离线词典未收录时的拼写相似建议 */
+  suggestions?: string[];
   found: boolean;
 }
 

@@ -281,6 +281,11 @@ export const WordLookupPopover: React.FC<WordLookupPopoverProps> = ({
                   </>
                 )}
               </div>
+              {result.correctedFrom && (
+                <p className="mt-1.5 inline-flex items-center gap-1 rounded-md bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
+                  已纠错：{result.correctedFrom} → {result.word}
+                </p>
+              )}
             </>
           )}
         </div>
@@ -387,6 +392,24 @@ export const WordLookupPopover: React.FC<WordLookupPopoverProps> = ({
             </div>
           ) : (
             <div className="space-y-2">
+              {result.suggestions && result.suggestions.length > 0 && (
+                <div className="flex flex-wrap items-center gap-1.5 rounded-lg border border-amber-200 bg-amber-50/70 px-2.5 py-2 text-xs text-amber-900 dark:border-amber-800/60 dark:bg-amber-950/30 dark:text-amber-200">
+                  <span>你是不是想查：</span>
+                  {result.suggestions.map((sug) => (
+                    <button
+                      key={sug}
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onSelectSynonym?.(sug);
+                      }}
+                      className="rounded-md border border-amber-300 bg-white px-2 py-0.5 font-mono font-semibold text-amber-900 transition-colors hover:bg-amber-100 dark:border-amber-700 dark:bg-slate-900 dark:text-amber-200 dark:hover:bg-slate-800"
+                    >
+                      {sug}
+                    </button>
+                  ))}
+                </div>
+              )}
               <p className="text-xs leading-relaxed text-slate-500 dark:text-slate-400">
                 {translationConfigured
                   ? '离线词典未收录，可点击下方按钮调用翻译接口，或手动输入中文释义。'

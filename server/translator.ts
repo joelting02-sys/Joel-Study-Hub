@@ -554,6 +554,7 @@ export function parseModelTranslationPayload(
   }
 
   let word = cleanedSurface;
+  let correctedFrom = '';
   let phonetic = '';
   let pos = '';
   let contextZh = '';
@@ -564,6 +565,16 @@ export function parseModelTranslationPayload(
 
   if (obj) {
     word = pickString(obj, ['word', 'lemma', 'base_form']) || cleanedSurface;
+    correctedFrom = pickString(obj, [
+      'corrected_from',
+      'correctedFrom',
+      'typo_from',
+      'typoFrom',
+      'original_typo',
+    ]);
+    if (correctedFrom.toLowerCase() === word.toLowerCase()) {
+      correctedFrom = '';
+    }
     phonetic = pickString(obj, ['phonetic', 'ipa']).replace(/^\/+|\/+$/g, '');
     pos = pickString(obj, ['pos', 'part_of_speech', 'partOfSpeech']);
     contextZh = pickString(obj, [
@@ -626,6 +637,7 @@ export function parseModelTranslationPayload(
     ...(synonyms.length > 0 ? { synonyms } : {}),
     source: 'api',
     lemmaNote,
+    ...(correctedFrom ? { correctedFrom } : {}),
     found: true,
   };
 }
@@ -802,7 +814,7 @@ export async function translateWordWithApi(
         {
           role: 'system',
           content:
-            '英汉学习词典。只返回合法JSON：{"word":"词原形或短语","phonetic":"音标(无斜杠)","pos":"词性","context_zh":"在当前原句中最贴切的一句话中文意思(无原句可留空)","meaning_zh":"2-4个核心中文义项，；分隔","plain_zh":"一句大白话通俗解释","alternatives":["2-3个直观中文说法"],"synonyms":["2-3个英文同义词"]}',
+            '英汉学习词典。先检查输入英文有无拼写错误：若拼错必须在word中纠正为标准拼写并在corrected_from填原错词，无错则corrected_from留空。只返回合法JSON：{"word":"正确词原形或短语","corrected_from":"原错拼词(无错留空)","phonetic":"音标(无斜杠)","pos":"词性","context_zh":"当前原句中文译义(无原句留空)","meaning_zh":"2-4个核心中文义项，；分隔","plain_zh":"一句大白话通俗解释","alternatives":["2-3个直观中文说法"],"synonyms":["2-3个英文同义词"]}',
         },
         {
           role: 'user',

@@ -74,7 +74,13 @@ pub struct AddVocabInput {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateVocabPatch {
     #[serde(default)]
+    pub word: Option<String>,
+    #[serde(default)]
     pub meaning_zh: Option<String>,
+    #[serde(default)]
+    pub phonetic: Option<String>,
+    #[serde(default)]
+    pub pos: Option<String>,
     #[serde(default)]
     pub status: Option<String>,
     #[serde(default)]
@@ -262,6 +268,10 @@ pub struct LookupResult {
     pub source: String,
     #[serde(rename = "lemmaNote", skip_serializing_if = "Option::is_none")]
     pub lemma_note: Option<String>,
+    #[serde(rename = "correctedFrom", default, skip_serializing_if = "Option::is_none")]
+    pub corrected_from: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub suggestions: Vec<String>,
     pub found: bool,
 }
 
