@@ -669,6 +669,7 @@ pub fn parse_translation_payload(
     let mut phonetic = String::new();
     let mut pos = String::new();
     let mut context_zh = String::new();
+    let mut example_en = String::new();
     let mut meaning_zh = String::new();
     let mut plain_zh = String::new();
     let mut alternatives: Vec<String> = Vec::new();
@@ -703,6 +704,16 @@ pub fn parse_translation_payload(
                 "contextZh",
                 "contextual_meaning",
                 "context_meaning",
+            ],
+        );
+        example_en = pick_str(
+            &map,
+            &[
+                "example_en",
+                "exampleEn",
+                "example_sentence",
+                "exampleSentence",
+                "example",
             ],
         );
         meaning_zh = pick_str(
@@ -783,6 +794,11 @@ pub fn parse_translation_payload(
             None
         } else {
             Some(context_zh)
+        },
+        example_en: if example_en.is_empty() {
+            None
+        } else {
+            Some(example_en)
         },
         plain_zh: if plain_zh.is_empty() {
             None
@@ -945,7 +961,7 @@ pub async fn translate_word_with_api(
         }
         let mut user_parts = Vec::new();
         if short_sentence.is_empty() {
-            user_parts.push(cleaned_word.clone());
+            user_parts.push(format!("{cleaned_word} | 无原句，请生成1句简洁英文例句"));
         } else {
             user_parts.push(format!("{cleaned_word} | 句: {short_sentence}"));
         }
@@ -960,7 +976,7 @@ pub async fn translate_word_with_api(
             json!([
                 {
                     "role": "system",
-                    "content": "英汉学习词典。先检查输入英文有无拼写错误：若拼错必须在word中纠正为标准拼写并在corrected_from填原错词，无错则corrected_from留空。只返回合法JSON：{\"word\":\"正确词原形或短语\",\"corrected_from\":\"原错拼词(无错留空)\",\"phonetic\":\"音标(无斜杠)\",\"pos\":\"词性\",\"context_zh\":\"当前原句中文译义(无原句留空)\",\"meaning_zh\":\"2-4个核心中文义项，；分隔\",\"plain_zh\":\"一句大白话通俗解释\",\"alternatives\":[\"2-3个直观中文说法\"],\"synonyms\":[\"2-3个英文同义词\"]}"
+                    "content": "英汉学习词典。先检查输入英文有无拼写错误：若拼错必须在word中纠正为标准拼写并在corrected_from填原错词，无错留空。若用户未提供原句，必须在example_en生成1句自然简洁的英文例句并在context_zh给该例句中文译文；若已提供原句，example_en留空。只返回合法JSON：{\"word\":\"正确词原形或短语\",\"corrected_from\":\"原错拼词(无错留空)\",\"phonetic\":\"音标(无斜杠)\",\"pos\":\"词性\",\"example_en\":\"无原句时生成的英文例句(有原句留空)\",\"context_zh\":\"原句或例句的中文译义\",\"meaning_zh\":\"2-4个核心中文义项，；分隔\",\"plain_zh\":\"一句大白话通俗解释\",\"alternatives\":[\"2-3个直观中文说法\"],\"synonyms\":[\"2-3个英文同义词\"]}"
                 },
                 {
                     "role": "user",
@@ -972,9 +988,9 @@ pub async fn translate_word_with_api(
             if let Some(effort) = reasoning_effort {
                 obj.insert("reasoning_effort".to_string(), json!(effort));
                 if effort == "none" {
-                    obj.insert("max_tokens".to_string(), json!(280));
+                    obj.insert("max_tokens".to_string(), json!(320));
                 } else if effort == "low" {
-                    obj.insert("max_tokens".to_string(), json!(340));
+                    obj.insert("max_tokens".to_string(), json!(400));
                 }
             }
         }

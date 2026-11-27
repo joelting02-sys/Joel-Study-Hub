@@ -19,6 +19,7 @@ import type {
   TranslationApiStatus,
   TtsAudioInput,
   TtsAudioResult,
+  VocabAiCache,
   VocabEntry,
   VocabFile,
   VocabStatus,
@@ -100,6 +101,7 @@ export const studyhubApi = {
     context?: string;
     source?: string;
     subject?: string;
+    ai_cache?: VocabAiCache;
   }): Promise<{ entry: VocabEntry; isNew: boolean; vocab: VocabFile }> {
     if (isTauriDesktop()) {
       return invoke<{ entry: VocabEntry; isNew: boolean; vocab: VocabFile }>('add_vocab', {
@@ -122,6 +124,8 @@ export const studyhubApi = {
       status?: VocabStatus;
       subject?: string;
       context?: string;
+      ai_cache?: VocabAiCache;
+      clear_ai_cache?: boolean;
     },
   ): Promise<VocabFile> {
     if (isTauriDesktop()) return invoke<VocabFile>('update_vocab', { id, patch });
@@ -339,7 +343,7 @@ export const studyhubApi = {
   async getUpdateState(): Promise<AppUpdateState> {
     if (isTauriDesktop()) return invoke<AppUpdateState>('get_update_state');
     return {
-      currentVersion: '1.0.11',
+      currentVersion: '1.0.12',
       isPackaged: false,
       isPortable: false,
       supported: false,

@@ -209,6 +209,10 @@ async function startServer() {
         context: typeof body.context === 'string' ? body.context : '',
         source: typeof body.source === 'string' ? body.source : '',
         subject: typeof body.subject === 'string' ? body.subject : '其他',
+        ai_cache:
+          body.ai_cache && typeof body.ai_cache === 'object' && !Array.isArray(body.ai_cache)
+            ? body.ai_cache
+            : undefined,
       });
       res.json(result);
     } catch (err) {

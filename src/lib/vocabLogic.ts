@@ -4,6 +4,7 @@
 
 import type {
   SubjectCode,
+  VocabAiCache,
   VocabEntry,
   VocabInboxItem,
   VocabStatus,
@@ -100,6 +101,7 @@ export interface AddVocabInput {
   context?: string;
   source?: string;
   subject?: string;
+  ai_cache?: VocabAiCache;
 }
 
 /**
@@ -131,6 +133,8 @@ export function addOrIncrementVocab(
       meaning_zh: existing.meaning_zh || input.meaning_zh.trim(),
       phonetic: existing.phonetic || (input.phonetic ?? '').trim(),
       pos: existing.pos || (input.pos ?? '').trim(),
+      context: existing.context || (input.context ?? '').trim(),
+      ai_cache: existing.ai_cache ?? input.ai_cache,
     };
     const nextWords = [...words];
     nextWords[existingIdx] = updated;
@@ -155,6 +159,7 @@ export function addOrIncrementVocab(
       next_review: addDaysToYmd(todayYmd, 1),
       interval_days: 1,
     },
+    ...(input.ai_cache ? { ai_cache: input.ai_cache } : {}),
   };
 
   return {

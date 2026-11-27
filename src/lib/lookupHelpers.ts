@@ -147,6 +147,7 @@ export function mergeLookupEnrichment(base: LookupResult, api: LookupResult): Lo
   return {
     ...api,
     context_zh: contextZh,
+    example_en: api.example_en?.trim() || base.example_en?.trim() || undefined,
     phonetic: api.phonetic || base.phonetic,
     pos: api.pos || base.pos,
     alternatives: mergedAlternatives.slice(0, 6),

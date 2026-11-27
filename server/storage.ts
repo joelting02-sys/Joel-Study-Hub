@@ -35,6 +35,7 @@ import {
   markWordStatus,
   mergeInboxWords,
   normalizeSubject,
+  normalizeWordKey,
   type AddVocabInput,
 } from '../src/lib/vocabLogic.ts';
 import { AGENT_GUIDE_CONTENT } from './agentGuide.ts';
@@ -423,6 +424,8 @@ export class StudyHubStorage extends EventEmitter {
       status?: VocabStatus;
       subject?: string;
       context?: string;
+      ai_cache?: VocabEntry['ai_cache'];
+      clear_ai_cache?: boolean;
     },
   ): VocabFile {
     const current = this.readVocabFile();
@@ -453,6 +456,11 @@ export class StudyHubStorage extends EventEmitter {
         pos: patch.pos !== undefined ? patch.pos.trim() : w.pos,
         subject: patch.subject !== undefined ? normalizeSubject(patch.subject) : w.subject,
         context: patch.context !== undefined ? patch.context.trim() : w.context,
+        ai_cache: patch.clear_ai_cache
+          ? undefined
+          : patch.ai_cache !== undefined
+            ? patch.ai_cache
+            : w.ai_cache,
       };
     });
 

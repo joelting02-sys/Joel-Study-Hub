@@ -330,6 +330,7 @@ test('parseModelTranslationPayload extracts context_zh, correctedFrom, plain_zh,
               corrected_from: 'stakholder',
               phonetic: 'ˈsteɪkhəʊldə(r)',
               pos: 'n.',
+              example_en: 'Every stakeholder has a voice in the decision.',
               context_zh: '企业利益相关方',
               meaning_zh: '利益相关者；干系人',
               plain_zh: '跟公司或项目有利害关系的人（比如股东、员工、客户）',
@@ -344,6 +345,7 @@ test('parseModelTranslationPayload extracts context_zh, correctedFrom, plain_zh,
   );
   assert.equal(rich.word, 'stakeholder');
   assert.equal(rich.correctedFrom, 'stakholder');
+  assert.equal(rich.example_en, 'Every stakeholder has a voice in the decision.');
   assert.equal(rich.context_zh, '企业利益相关方');
   assert.equal(rich.plain_zh, '跟公司或项目有利害关系的人（比如股东、员工、客户）');
   assert.deepEqual(rich.alternatives, ['股东', '利益方']);
@@ -405,7 +407,7 @@ test('pickFastReasoningEffort disables reasoning for DeepSeek Flash and retries 
     );
     assert.equal(attempts.length, 2);
     assert.equal(attempts[0].reasoning_effort, 'none');
-    assert.equal(attempts[0].max_tokens, 280);
+    assert.equal(attempts[0].max_tokens, 320);
     assert.equal('reasoning_effort' in attempts[1], false);
     assert.equal(res.meaning_zh, '利益相关者；股东');
   } finally {

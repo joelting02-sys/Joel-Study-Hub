@@ -14,6 +14,19 @@ export interface VocabReview {
   interval_days: number;
 }
 
+export interface VocabAiCache {
+  meaning_zh: string;
+  context_zh?: string;
+  plain_zh?: string;
+  alternatives?: string[];
+  synonyms?: string[];
+  example_en?: string;
+  phonetic?: string;
+  pos?: string;
+  model?: string;
+  cached_at: string;
+}
+
 export interface VocabEntry {
   id: string;
   word: string;
@@ -28,6 +41,7 @@ export interface VocabEntry {
   learned_at: string | null;
   lookup_count: number;
   review: VocabReview;
+  ai_cache?: VocabAiCache;
 }
 
 export interface VocabFile {
@@ -106,6 +120,8 @@ export interface LookupResult {
   meaning_zh: string;
   /** 在当前原句中最贴切的中文意思 */
   context_zh?: string;
+  /** 未提供原句时由大模型生成的英文例句 */
+  example_en?: string;
   /** 更直观的大白话 / 通俗中文解释 */
   plain_zh?: string;
   /** 其他常见中文说法 / 近义译法 */

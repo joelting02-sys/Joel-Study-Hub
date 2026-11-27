@@ -1,5 +1,6 @@
-import type { LookupResult, TranslationMode, VocabEntry } from '../types/studyhub';
+import type { LookupResult, TranslationMode, VocabAiCache, VocabEntry } from '../types/studyhub';
 import { splitMeaningSenses } from './dictionary';
+import { mergeLookupEnrichment } from './lookupHelpers';
 import { cleanToken } from './textTokenize';
 
 export const BASIC_STOP_WORDS: ReadonlySet<string> = new Set([
@@ -223,4 +224,67 @@ export class PersistentTranslationCache {
       this.persist();
     }
   }
+
+  deleteByWord(wordKey: string): void {
+    const normalized = wordKey.trim().toLowerCase();
+    if (!normalized) return;
+    let changed = false;
+    for (const key of Array.from(this.map.keys())) {
+      const parts = key.split('|');
+      if (parts.length >= 3 && parts[2] === normalized) {
+        this.map.delete(key);
+        changed = true;
+      }
+    }
+    if (changed) {
+      this.persist();
+    }
+  }
+}
+
+export function vocabAiCacheFromLookup(result: LookupResult, model?: string): VocabAiCache {
+  return {
+    meaning_zh: result.meaning_zh.trim(),
+    ...(result.context_zh?.trim() ? { context_zh: result.context_zh.trim() } : {}),
+    ...(result.plain_zh?.trim() ? { plain_zh: result.plain_zh.trim() } : {}),
+    ...(result.alternatives && result.alternatives.length > 0
+      ? { alternatives: result.alternatives }
+      : {}),
+    ...(result.synonyms && result.synonyms.length > 0 ? { synonyms: result.synonyms } : {}),
+    ...(result.example_en?.trim() ? { example_en: result.example_en.trim() } : {}),
+    ...(result.phonetic?.trim() ? { phonetic: result.phonetic.trim() } : {}),
+    ...(result.pos?.trim() ? { pos: result.pos.trim() } : {}),
+    ...(model?.trim() ? { model: model.trim() } : {}),
+    cached_at: new Date().toISOString(),
+  };
+}
+
+export function buildLookupFromVocabAiCache(
+  base: LookupResult,
+  entry: VocabEntry,
+  sentence = '',
+): LookupResult | null {
+  const cache = entry.ai_cache;
+  if (!cache || !cache.meaning_zh.trim()) return null;
+
+  const normSentence = sentence.trim().replace(/\s+/g, ' ').toLowerCase();
+  const normEntryContext = (entry.context || '').trim().replace(/\s+/g, ' ').toLowerCase();
+  const sameContext = !normSentence || (Boolean(normEntryContext) && normSentence === normEntryContext);
+
+  const cachedAsLookup: LookupResult = {
+    word: entry.word,
+    surface: base.surface || entry.word,
+    phonetic: cache.phonetic || entry.phonetic || base.phonetic,
+    pos: cache.pos || entry.pos || base.pos,
+    meaning_zh: entry.meaning_zh.trim() || cache.meaning_zh.trim(),
+    ...(sameContext && cache.context_zh ? { context_zh: cache.context_zh } : {}),
+    ...(cache.plain_zh ? { plain_zh: cache.plain_zh } : {}),
+    ...(cache.alternatives ? { alternatives: cache.alternatives } : {}),
+    ...(cache.synonyms ? { synonyms: cache.synonyms } : {}),
+    ...(cache.example_en ? { example_en: cache.example_en } : {}),
+    source: 'api',
+    found: true,
+  };
+
+  return mergeLookupEnrichment(base, cachedAsLookup);
 }

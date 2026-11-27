@@ -558,6 +558,7 @@ export function parseModelTranslationPayload(
   let phonetic = '';
   let pos = '';
   let contextZh = '';
+  let exampleEn = '';
   let meaningZh = '';
   let plainZh = '';
   let alternatives: string[] = [];
@@ -582,6 +583,13 @@ export function parseModelTranslationPayload(
       'contextZh',
       'contextual_meaning',
       'context_meaning',
+    ]);
+    exampleEn = pickString(obj, [
+      'example_en',
+      'exampleEn',
+      'example_sentence',
+      'exampleSentence',
+      'example',
     ]);
     meaningZh = pickString(obj, [
       'meaning_zh',
@@ -632,6 +640,7 @@ export function parseModelTranslationPayload(
     pos,
     meaning_zh: meaningZh,
     ...(contextZh ? { context_zh: contextZh } : {}),
+    ...(exampleEn ? { example_en: exampleEn } : {}),
     ...(plainZh ? { plain_zh: plainZh } : {}),
     ...(alternatives.length > 0 ? { alternatives } : {}),
     ...(synonyms.length > 0 ? { synonyms } : {}),
@@ -802,7 +811,9 @@ export async function translateWordWithApi(
       };
     }
     const userPrompt = [
-      shortSentence ? `${cleanedWord} | 句: ${shortSentence}` : cleanedWord,
+      shortSentence
+        ? `${cleanedWord} | 句: ${shortSentence}`
+        : `${cleanedWord} | 无原句，请生成1句简洁英文例句`,
       subject ? `课: ${subject}` : '',
     ]
       .filter(Boolean)
@@ -814,7 +825,7 @@ export async function translateWordWithApi(
         {
           role: 'system',
           content:
-            '英汉学习词典。先检查输入英文有无拼写错误：若拼错必须在word中纠正为标准拼写并在corrected_from填原错词，无错则corrected_from留空。只返回合法JSON：{"word":"正确词原形或短语","corrected_from":"原错拼词(无错留空)","phonetic":"音标(无斜杠)","pos":"词性","context_zh":"当前原句中文译义(无原句留空)","meaning_zh":"2-4个核心中文义项，；分隔","plain_zh":"一句大白话通俗解释","alternatives":["2-3个直观中文说法"],"synonyms":["2-3个英文同义词"]}',
+            '英汉学习词典。先检查输入英文有无拼写错误：若拼错必须在word中纠正为标准拼写并在corrected_from填原错词，无错留空。若用户未提供原句，必须在example_en生成1句自然简洁的英文例句并在context_zh给该例句中文译文；若已提供原句，example_en留空。只返回合法JSON：{"word":"正确词原形或短语","corrected_from":"原错拼词(无错留空)","phonetic":"音标(无斜杠)","pos":"词性","example_en":"无原句时生成的英文例句(有原句留空)","context_zh":"原句或例句的中文译义","meaning_zh":"2-4个核心中文义项，；分隔","plain_zh":"一句大白话通俗解释","alternatives":["2-3个直观中文说法"],"synonyms":["2-3个英文同义词"]}',
         },
         {
           role: 'user',
@@ -825,9 +836,9 @@ export async function translateWordWithApi(
     if (withReasoningControl && reasoningEffort) {
       payload.reasoning_effort = reasoningEffort;
       if (reasoningEffort === 'none') {
-        payload.max_tokens = 280;
+        payload.max_tokens = 320;
       } else if (reasoningEffort === 'low') {
-        payload.max_tokens = 340;
+        payload.max_tokens = 400;
       }
     }
     return payload;

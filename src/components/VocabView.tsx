@@ -24,12 +24,14 @@ import type {
   SpeechEngine,
   SpeechRate,
   SubjectCode,
+  VocabAiCache,
   VocabEntry,
   VocabStatus,
 } from '../types/studyhub';
-import { filterAndSortVocab } from '../lib/vocabLogic';
+import { filterAndSortVocab, normalizeWordKey } from '../lib/vocabLogic';
 import { extractErrorMessage } from '../lib/errors';
 import { formatPhoneticDisplay } from '../lib/lookupHelpers';
+import { vocabAiCacheFromLookup } from '../lib/translationCache';
 import { InteractiveText, StudyWordButton, type WordClickPayload } from './InteractiveText';
 import { WordSpeakButton } from './WordSpeakButton';
 
@@ -37,6 +39,8 @@ interface VocabViewProps {
   words: VocabEntry[];
   vocabLookupMap: Map<string, VocabEntry>;
   translationConfigured: boolean;
+  translationModel?: string;
+  autoTranslatingWordId?: string | null;
   speechAccent: SpeechAccent;
   speechRate: SpeechRate;
   speechEngine: SpeechEngine;
@@ -55,6 +59,7 @@ interface VocabViewProps {
     context: string;
     source: string;
     subject: string;
+    ai_cache?: VocabAiCache;
   }) => Promise<void>;
   onUpdateWord: (
     id: string,
@@ -65,6 +70,8 @@ interface VocabViewProps {
       pos?: string;
       status?: VocabStatus;
       subject?: string;
+      ai_cache?: VocabAiCache;
+      clear_ai_cache?: boolean;
     },
   ) => Promise<void>;
   onDeleteWord: (id: string) => Promise<void>;
@@ -144,6 +151,8 @@ export const VocabView: React.FC<VocabViewProps> = ({
   words,
   vocabLookupMap,
   translationConfigured,
+  translationModel,
+  autoTranslatingWordId,
   speechAccent,
   speechRate,
   speechEngine,
@@ -162,7 +171,6 @@ export const VocabView: React.FC<VocabViewProps> = ({
   const [editingWord, setEditingWord] = useState('');
   const [editingMeaning, setEditingMeaning] = useState('');
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
-  const [translatingRowId, setTranslatingRowId] = useState<string | null>(null);
   const [rowError, setRowError] = useState<string>('');
 
   // 快速查词并入库
@@ -172,9 +180,27 @@ export const VocabView: React.FC<VocabViewProps> = ({
   const [quickSaving, setQuickSaving] = useState(false);
   const [quickResult, setQuickResult] = useState<LookupResult | null>(null);
   const [quickWordDraft, setQuickWordDraft] = useState('');
+  const [quickContextDraft, setQuickContextDraft] = useState('');
   const [quickManualMeaning, setQuickManualMeaning] = useState('');
   const [quickError, setQuickError] = useState('');
   const [quickSavedNotice, setQuickSavedNotice] = useState('');
+
+  const existingInputMatch = useMemo(
+    () => vocabLookupMap.get(normalizeWordKey(quickWord)) ?? null,
+    [vocabLookupMap, quickWord],
+  );
+  const existingDraftMatch = useMemo(
+    () => vocabLookupMap.get(normalizeWordKey(quickWordDraft || quickResult?.word || '')) ?? null,
+    [vocabLookupMap, quickWordDraft, quickResult?.word],
+  );
+
+  const locateExistingWord = (entry: VocabEntry) => {
+    setActiveTab(entry.status);
+    setSubject('ALL');
+    setSearch(entry.word);
+    setQuickResult(null);
+    setQuickError('');
+  };
 
   const learningCount = useMemo(
     () => words.filter((w) => w.status === 'learning').length,
@@ -217,34 +243,20 @@ export const VocabView: React.FC<VocabViewProps> = ({
       setRowError('英文单词不能为空');
       return;
     }
+    const existingEntry = words.find((w) => w.id === id);
+    const wordChanged = Boolean(
+      existingEntry && normalizeWordKey(existingEntry.word) !== normalizeWordKey(trimmedWord),
+    );
     setRowError('');
     try {
-      await onUpdateWord(id, { word: trimmedWord, meaning_zh: editingMeaning });
+      await onUpdateWord(id, {
+        word: trimmedWord,
+        meaning_zh: editingMeaning,
+        ...(wordChanged ? { clear_ai_cache: true } : {}),
+      });
       setEditingId(null);
     } catch (err) {
       setRowError(extractErrorMessage(err, '保存修改失败'));
-    }
-  };
-
-  const handleRowTranslate = async (entry: VocabEntry) => {
-    setTranslatingRowId(entry.id);
-    setRowError('');
-    try {
-      const res = await onLookupAndTranslate({
-        surface: entry.word,
-        sentence: entry.context,
-        subject: entry.subject,
-        preferApi: true,
-      });
-      if (res.found && res.meaning_zh.trim()) {
-        await onUpdateWord(entry.id, { meaning_zh: res.meaning_zh.trim() });
-      } else {
-        setRowError(`未查到「${entry.word}」的释义，请检查翻译接口配置或手动编辑。`);
-      }
-    } catch (err) {
-      setRowError(extractErrorMessage(err, '翻译失败'));
-    } finally {
-      setTranslatingRowId(null);
     }
   };
 
@@ -254,11 +266,16 @@ export const VocabView: React.FC<VocabViewProps> = ({
   ) => {
     const cleaned = targetWord.trim();
     if (!cleaned) return;
+    if (!preferApi && vocabLookupMap.has(normalizeWordKey(cleaned))) {
+      setQuickError(`单词库中已存在「${cleaned}」，不能重复添加`);
+      return;
+    }
     setQuickLoading(true);
     setQuickError('');
     setQuickSavedNotice('');
     setQuickResult(null);
     setQuickWordDraft('');
+    setQuickContextDraft('');
     setQuickManualMeaning('');
     try {
       const res = await onLookupAndTranslate({
@@ -269,6 +286,7 @@ export const VocabView: React.FC<VocabViewProps> = ({
       });
       setQuickResult(res);
       setQuickWordDraft(res.word || cleaned);
+      setQuickContextDraft(quickContext.trim() || res.example_en || '');
       if (res.found) {
         setQuickManualMeaning(res.meaning_zh);
       }
@@ -288,8 +306,13 @@ export const VocabView: React.FC<VocabViewProps> = ({
     if (!quickResult) return;
     const finalWord = quickWordDraft.trim() || quickResult.word;
     const finalMeaning = quickManualMeaning.trim() || quickResult.meaning_zh.trim();
+    const finalContext = quickContextDraft.trim() || quickContext.trim();
     if (!finalWord) {
       setQuickError('英文单词不能为空');
+      return;
+    }
+    if (vocabLookupMap.has(normalizeWordKey(finalWord))) {
+      setQuickError(`单词库中已存在「${finalWord}」，不能重复添加`);
       return;
     }
     if (!finalMeaning) {
@@ -304,15 +327,19 @@ export const VocabView: React.FC<VocabViewProps> = ({
         meaning_zh: finalMeaning,
         phonetic: quickResult.phonetic || '',
         pos: quickResult.pos || '',
-        context: quickContext.trim(),
+        context: finalContext,
         source: '单词库快速查词',
         subject: subject === 'ALL' ? '其他' : subject,
+        ...(quickResult.source === 'api'
+          ? { ai_cache: vocabAiCacheFromLookup(quickResult, translationModel) }
+          : {}),
       });
       setQuickSavedNotice(`已将「${finalWord}」加入单词库`);
       setQuickWord('');
       setQuickContext('');
       setQuickResult(null);
       setQuickWordDraft('');
+      setQuickContextDraft('');
       setQuickManualMeaning('');
     } catch (err) {
       setQuickError(extractErrorMessage(err, '保存单词失败'));
@@ -365,12 +392,12 @@ export const VocabView: React.FC<VocabViewProps> = ({
             aria-label="可选原句语境"
             value={quickContext}
             onChange={(e) => setQuickContext(e.target.value)}
-            placeholder="可选：粘贴所在英文原句（提升语境翻译准确度）"
+            placeholder="可选：粘贴所在英文原句（留空时由大模型自动生成例句）"
             className="flex-1 rounded-lg border border-slate-300 bg-slate-50 px-3.5 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
           />
           <button
             type="submit"
-            disabled={quickLoading || !quickWord.trim()}
+            disabled={quickLoading || !quickWord.trim() || Boolean(existingInputMatch)}
             className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-blue-700 disabled:opacity-50 whitespace-nowrap dark:bg-blue-500 dark:hover:bg-blue-600"
           >
             {quickLoading ? (
@@ -378,6 +405,8 @@ export const VocabView: React.FC<VocabViewProps> = ({
                 <Loader2 className="h-4 w-4 animate-spin" />
                 <span>翻译中…</span>
               </>
+            ) : existingInputMatch ? (
+              <span>已在词库</span>
             ) : (
               <>
                 <Languages className="h-4 w-4" />
@@ -386,6 +415,23 @@ export const VocabView: React.FC<VocabViewProps> = ({
             )}
           </button>
         </form>
+
+        {existingInputMatch && !quickResult && (
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-200 bg-amber-50/80 px-3 py-2 text-xs text-amber-900 dark:border-amber-800/60 dark:bg-amber-950/35 dark:text-amber-200">
+            <span>
+              单词库中已存在「<strong className="font-mono">{existingInputMatch.word}</strong>」
+              （{existingInputMatch.status === 'learned' ? '已学会' : '学习中'} ·{' '}
+              {existingInputMatch.meaning_zh || '无释义'}），不能重复添加。
+            </span>
+            <button
+              type="button"
+              onClick={() => locateExistingWord(existingInputMatch)}
+              className="rounded-md border border-amber-300 bg-white px-2.5 py-1 font-semibold text-amber-900 hover:bg-amber-100 dark:border-amber-700 dark:bg-slate-900 dark:text-amber-200"
+            >
+              定位该词
+            </button>
+          </div>
+        )}
 
         {quickResult && (
           <div className="space-y-2.5 rounded-lg border border-slate-200 bg-slate-50/70 p-3.5 dark:border-slate-700 dark:bg-slate-900/50">
@@ -414,19 +460,23 @@ export const VocabView: React.FC<VocabViewProps> = ({
                   · {quickResult.source === 'api' ? '翻译接口' : quickResult.found ? '离线词典' : '未收录'}
                 </span>
               </div>
+            </div>
 
-              {translationConfigured && quickResult.source !== 'api' && (
+            {existingDraftMatch && (
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-200 bg-amber-50/80 px-3 py-2 text-xs text-amber-900 dark:border-amber-800/60 dark:bg-amber-950/35 dark:text-amber-200">
+                <span>
+                  单词库中已存在「<strong className="font-mono">{existingDraftMatch.word}</strong>」
+                  （{existingDraftMatch.status === 'learned' ? '已学会' : '学习中'}），无法重复添加。
+                </span>
                 <button
                   type="button"
-                  disabled={quickLoading}
-                  onClick={(e) => void handleQuickLookup(e, true)}
-                  className="inline-flex items-center gap-1 text-xs font-semibold text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
+                  onClick={() => locateExistingWord(existingDraftMatch)}
+                  className="rounded-md border border-amber-300 bg-white px-2.5 py-1 font-semibold text-amber-900 hover:bg-amber-100 dark:border-amber-700 dark:bg-slate-900 dark:text-amber-200"
                 >
-                  <Languages className="h-3.5 w-3.5" />
-                  <span>改用翻译模型重译</span>
+                  定位该词
                 </button>
-              )}
-            </div>
+              </div>
+            )}
 
             {quickResult.correctedFrom && (
               <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-emerald-200 bg-emerald-50/70 px-3 py-1.5 text-xs text-emerald-900 dark:border-emerald-800/60 dark:bg-emerald-950/35 dark:text-emerald-200">
@@ -486,14 +536,42 @@ export const VocabView: React.FC<VocabViewProps> = ({
               />
               <button
                 type="button"
-                disabled={quickSaving || !quickManualMeaning.trim() || !quickWordDraft.trim()}
+                disabled={
+                  quickSaving ||
+                  !quickManualMeaning.trim() ||
+                  !quickWordDraft.trim() ||
+                  Boolean(existingDraftMatch)
+                }
                 onClick={() => void handleQuickAdd()}
                 className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-emerald-600 px-4 py-1.5 text-sm font-semibold text-white transition-colors hover:bg-emerald-700 disabled:opacity-50 whitespace-nowrap dark:bg-emerald-500 dark:hover:bg-emerald-600"
               >
                 <Plus className="h-4 w-4" />
-                <span>{quickSaving ? '保存中…' : '加入单词库'}</span>
+                <span>
+                  {quickSaving ? '保存中…' : existingDraftMatch ? '已在单词库' : '加入单词库'}
+                </span>
               </button>
             </div>
+
+            {(quickContextDraft || quickResult.example_en) && (
+              <div className="space-y-1">
+                <label
+                  htmlFor="quick-context-draft"
+                  className="block text-[11px] font-medium text-slate-500 dark:text-slate-400"
+                >
+                  {!quickContext.trim() && quickResult.example_en
+                    ? '原句（大模型自动生成，可微调）：'
+                    : '原句：'}
+                </label>
+                <input
+                  id="quick-context-draft"
+                  type="text"
+                  value={quickContextDraft}
+                  onChange={(e) => setQuickContextDraft(e.target.value)}
+                  placeholder="英文例句…"
+                  className="w-full rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-800 focus:border-blue-500 focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
+                />
+              </div>
+            )}
           </div>
         )}
 
@@ -621,7 +699,7 @@ export const VocabView: React.FC<VocabViewProps> = ({
             const addedDate = item.added_at.slice(0, 10);
             const isEditing = editingId === item.id;
             const isConfirmingDelete = confirmDeleteId === item.id;
-            const isTranslatingThis = translatingRowId === item.id;
+            const isAutoTranslating = autoTranslatingWordId === item.id;
 
             return (
               <div
@@ -707,9 +785,16 @@ export const VocabView: React.FC<VocabViewProps> = ({
                       </button>
                     </div>
                   ) : (
-                    <p className="text-base font-medium text-slate-800 dark:text-slate-100">
-                      {item.meaning_zh || '（未填写中文释义）'}
-                    </p>
+                    <div className="space-y-0.5">
+                      <p className="text-base font-medium text-slate-800 dark:text-slate-100">
+                        {item.meaning_zh || '（未填写中文释义）'}
+                      </p>
+                      {item.ai_cache?.plain_zh && (
+                        <p className="text-xs text-slate-500 dark:text-slate-400">
+                          通俗：{item.ai_cache.plain_zh}
+                        </p>
+                      )}
+                    </div>
                   )}
 
                   {/* 原句（目标词高亮 + 所有英文单词皆可点词翻译） */}
@@ -752,28 +837,20 @@ export const VocabView: React.FC<VocabViewProps> = ({
                         <span className="tabular-nums">下次复习 {item.review.next_review}</span>
                       </>
                     )}
+                    {isAutoTranslating && (
+                      <>
+                        <span aria-hidden="true">·</span>
+                        <span className="inline-flex items-center gap-1 text-blue-600 dark:text-blue-400">
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                          <span>模型翻译并缓存中…</span>
+                        </span>
+                      </>
+                    )}
                   </div>
                 </div>
 
                 {/* 行操作区 */}
                 <div className="flex shrink-0 flex-wrap items-center gap-2 lg:pt-0.5">
-                  {translationConfigured && (
-                    <button
-                      type="button"
-                      disabled={isTranslatingThis}
-                      aria-label={`用翻译接口翻译 ${item.word}`}
-                      onClick={() => void handleRowTranslate(item)}
-                      className="inline-flex items-center gap-1 rounded-lg border border-blue-200 bg-blue-50 px-2.5 py-1.5 text-sm font-medium text-blue-700 transition-colors hover:bg-blue-100 disabled:opacity-50 whitespace-nowrap dark:border-blue-800/60 dark:bg-blue-950/40 dark:text-blue-300 dark:hover:bg-blue-900/50"
-                    >
-                      {isTranslatingThis ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      ) : (
-                        <Languages className="h-3.5 w-3.5" />
-                      )}
-                      <span>{isTranslatingThis ? '翻译中…' : '模型翻译'}</span>
-                    </button>
-                  )}
-
                   {item.status === 'learning' ? (
                     <button
                       type="button"

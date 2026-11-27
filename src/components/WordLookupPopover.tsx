@@ -13,10 +13,12 @@ import type {
   SpeechAccent,
   SpeechEngine,
   SpeechRate,
+  VocabAiCache,
   VocabEntry,
 } from '../types/studyhub';
 import { extractErrorMessage } from '../lib/errors';
 import { formatPhoneticDisplay, isDedicatedTranslationModel } from '../lib/lookupHelpers';
+import { vocabAiCacheFromLookup } from '../lib/translationCache';
 import { WordSpeakButton } from './WordSpeakButton';
 
 export interface ActiveLookupState {
@@ -52,6 +54,7 @@ interface WordLookupPopoverProps {
     context: string;
     source: string;
     subject: string;
+    ai_cache?: VocabAiCache;
   }) => Promise<void>;
   onUpdateExistingMeaning: (id: string, meaningZh: string) => Promise<void>;
   onClose: () => void;
@@ -164,7 +167,7 @@ export const WordLookupPopover: React.FC<WordLookupPopoverProps> = ({
   );
 
   const handleSave = async () => {
-    if (!result) return;
+    if (!result || existingEntry) return;
     if (!result.found && !manualMeaning.trim()) {
       setErrorMsg('请先输入中文意思，或点击「调用翻译接口」');
       return;
@@ -177,9 +180,12 @@ export const WordLookupPopover: React.FC<WordLookupPopoverProps> = ({
         meaning_zh: effectiveMeaning,
         phonetic: result.phonetic || '',
         pos: result.pos || '',
-        context: lookup.sentence,
+        context: lookup.sentence || result.example_en || '',
         source: lookup.source,
         subject: lookup.subject,
+        ...(result.source === 'api'
+          ? { ai_cache: vocabAiCacheFromLookup(result, translationModel) }
+          : {}),
       });
     } catch (err) {
       setErrorMsg(extractErrorMessage(err, '保存失败'));
@@ -514,12 +520,13 @@ export const WordLookupPopover: React.FC<WordLookupPopoverProps> = ({
               ) : (
                 <button
                   type="button"
-                  onClick={() => void handleSave()}
-                  disabled={saving || translatingApi}
-                  className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-800 transition-colors hover:bg-emerald-100 whitespace-nowrap dark:border-emerald-800/60 dark:bg-emerald-950/50 dark:text-emerald-300 dark:hover:bg-emerald-900/50"
+                  disabled
+                  className="inline-flex flex-1 cursor-default items-center justify-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-800 whitespace-nowrap dark:border-emerald-800/60 dark:bg-emerald-950/50 dark:text-emerald-300"
                 >
                   <Check className="h-4 w-4" />
-                  <span>已在单词库 ✓</span>
+                  <span>
+                    已在单词库（{existingEntry.status === 'learned' ? '已学会' : '学习中'}）✓
+                  </span>
                 </button>
               )
             ) : (

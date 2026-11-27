@@ -1,10 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  buildLookupFromVocabAiCache,
   isBasicStopWord,
   mergeVocabIntoLocalLookup,
   PersistentTranslationCache,
   shouldSkipAutoApiLookup,
+  vocabAiCacheFromLookup,
   type StorageLike,
 } from './translationCache';
 import { formatPhoneticDisplay, inferTypoCorrection, mergeLookupEnrichment } from './lookupHelpers';
@@ -175,4 +177,65 @@ test('inferTypoCorrection detects misspelled inputs while skipping valid inflect
   const merged = mergeLookupEnrichment(baseNotFound, apiCorrected);
   assert.equal(merged.correctedFrom, 'stakholder');
   assert.equal(merged.suggestions, undefined);
+});
+
+test('deleteByWord purges all entries for a deleted word and vocab ai_cache helpers preserve permanent cache', () => {
+  const storage = createMemoryStorage();
+  const cache = new PersistentTranslationCache(storage, 'test_purge', 20);
+  const sample: LookupResult = {
+    word: 'liquidity',
+    surface: 'liquidity',
+    phonetic: 'lɪˈkwɪdəti',
+    pos: 'n.',
+    context_zh: '资产流动性',
+    example_en: 'Banks must maintain sufficient liquidity.',
+    meaning_zh: '流动性；变现能力',
+    plain_zh: '资产快速换成现金的能力',
+    alternatives: ['变现能力'],
+    synonyms: ['cash flow'],
+    source: 'api',
+    found: true,
+  };
+  cache.set('model-a', 'liquidity', 'High liquidity reduces risk.', sample);
+  assert.ok(cache.getExact('model-a', 'liquidity', 'High liquidity reduces risk.'));
+
+  cache.deleteByWord('liquidity');
+  assert.equal(cache.getExact('model-a', 'liquidity', 'High liquidity reduces risk.'), undefined);
+  assert.equal(cache.getWordFallback('model-a', 'liquidity'), undefined);
+
+  const aiCache = vocabAiCacheFromLookup(sample, 'model-a');
+  const entry: VocabEntry = {
+    id: 'v-1',
+    word: 'liquidity',
+    meaning_zh: '流动性；变现能力',
+    phonetic: 'lɪˈkwɪdəti',
+    pos: 'n.',
+    context: 'High liquidity reduces risk.',
+    source: 'Quiz',
+    subject: 'BO',
+    status: 'learning',
+    added_at: '2026-11-27T00:00:00Z',
+    learned_at: null,
+    lookup_count: 1,
+    review: { next_review: '2026-11-28', interval_days: 1 },
+    ai_cache: aiCache,
+  };
+
+  const baseLocal: LookupResult = {
+    word: 'liquidity',
+    surface: 'liquidity',
+    phonetic: '',
+    pos: '',
+    meaning_zh: '流动性；变现能力',
+    source: 'ecdict',
+    found: true,
+  };
+
+  const sameCtx = buildLookupFromVocabAiCache(baseLocal, entry, 'High liquidity reduces risk.');
+  assert.equal(sameCtx?.context_zh, '资产流动性');
+  assert.equal(sameCtx?.plain_zh, '资产快速换成现金的能力');
+
+  const diffCtx = buildLookupFromVocabAiCache(baseLocal, entry, 'Another sentence entirely.');
+  assert.equal(diffCtx?.context_zh, undefined);
+  assert.equal(diffCtx?.plain_zh, '资产快速换成现金的能力');
 });

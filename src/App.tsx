@@ -35,10 +35,12 @@ import { extractErrorMessage } from './lib/errors';
 import { formatDateYmd, getDueReviewWords, normalizeWordKey } from './lib/vocabLogic';
 import { mergeLookupEnrichment } from './lib/lookupHelpers';
 import {
+  buildLookupFromVocabAiCache,
   hashSentence,
   mergeVocabIntoLocalLookup,
   PersistentTranslationCache,
   shouldSkipAutoApiLookup,
+  vocabAiCacheFromLookup,
 } from './lib/translationCache';
 import {
   WordLookupBehaviorContext,
@@ -126,6 +128,9 @@ export default function App() {
     persistentCacheRef.current = new PersistentTranslationCache();
   }
   const inFlightTranslateRef = useRef<Map<string, Promise<LookupResult>>>(new Map());
+  const failedAutoTranslateIdsRef = useRef<Set<string>>(new Set());
+  const autoTranslatingIdRef = useRef<string | null>(null);
+  const [autoTranslatingWordId, setAutoTranslatingWordId] = useState<string | null>(null);
 
   const cancelHoverClose = useCallback(() => {
     if (hoverCloseTimerRef.current !== null) {
@@ -261,6 +266,7 @@ export default function App() {
       context: string;
       source: string;
       subject: string;
+      ai_cache?: VocabEntry['ai_cache'];
     }) => {
       const res = await studyhubApi.addVocab(payload);
       setWords(res.vocab.words);
@@ -342,6 +348,25 @@ export default function App() {
         vocabLookupMap.get(normalizeWordKey(payload.surface));
       result = mergeVocabIntoLocalLookup(result, existingBeforeApi);
 
+      // 若单词库已有永久模型缓存，0ms 直接命中（除非用户删掉该词或手动点「重译」）
+      if (existingBeforeApi?.ai_cache) {
+        const permCached = buildLookupFromVocabAiCache(result, existingBeforeApi, payload.sentence);
+        if (permCached) {
+          setActiveLookup((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  loading: false,
+                  translatingApi: false,
+                  result: permCached,
+                }
+              : null,
+          );
+          await recordExistingWordLookupCount(permCached, payload, trigger, false);
+          return;
+        }
+      }
+
       const apiConfigured = Boolean(translationStatus?.configured);
       const model = translationStatus?.model || '';
       const targetSurface = payload.matchedGlossaryKey || payload.surface;
@@ -421,15 +446,25 @@ export default function App() {
                 meaning_zh: apiResult.meaning_zh,
                 phonetic: apiResult.phonetic || '',
                 pos: apiResult.pos || '',
-                context: payload.sentence,
+                context: payload.sentence || apiResult.example_en || '',
                 source: payload.source,
                 subject: payload.subject,
+                ai_cache: vocabAiCacheFromLookup(apiResult, model),
               });
               setWords(saved.vocab.words);
               void studyhubApi.getStatus().then(setFolderStatus);
               autoSaved = true;
             } catch {
               // 自动入库失败时仍保留翻译展示，允许用户手动点击加入
+            }
+          } else if (alreadyInVocab && !alreadyInVocab.ai_cache && apiResult.meaning_zh.trim()) {
+            try {
+              const updated = await studyhubApi.updateVocab(alreadyInVocab.id, {
+                ai_cache: vocabAiCacheFromLookup(apiResult, model),
+              });
+              setWords(updated.words);
+            } catch {
+              // 忽略后台补充永久缓存失败
             }
           }
 
@@ -504,15 +539,25 @@ export default function App() {
             meaning_zh: apiResult.meaning_zh,
             phonetic: apiResult.phonetic || '',
             pos: apiResult.pos || '',
-            context: activeLookup.sentence,
+            context: activeLookup.sentence || apiResult.example_en || '',
             source: activeLookup.source,
             subject: activeLookup.subject,
+            ai_cache: vocabAiCacheFromLookup(apiResult, model),
           });
           setWords(saved.vocab.words);
           void studyhubApi.getStatus().then(setFolderStatus);
           autoSaved = true;
         } catch {
           // 忽略自动入库失败
+        }
+      } else if (alreadyInVocab && apiResult.meaning_zh.trim()) {
+        try {
+          const updated = await studyhubApi.updateVocab(alreadyInVocab.id, {
+            ai_cache: vocabAiCacheFromLookup(apiResult, model),
+          });
+          setWords(updated.words);
+        } catch {
+          // 忽略手动重译同步永久缓存失败
         }
       }
 
@@ -541,7 +586,7 @@ export default function App() {
     }
   }, [activeLookup, vocabLookupMap, translationStatus?.model, preferences.autoAddTranslatedVocab]);
 
-  // 供单词库快速查词与单条重译复用（始终先查离线词典以提供拼写纠错参考，再按需调用翻译模型）
+  // 供单词库快速查词复用（先查离线词典做拼写纠错，有配置模型时始终走模型翻译并优先命中永久缓存）
   const handleLookupAndTranslate = useCallback(
     async (payload: {
       surface: string;
@@ -550,12 +595,17 @@ export default function App() {
       preferApi?: boolean;
     }): Promise<LookupResult> => {
       const localRes = await studyhubApi.lookup(payload.surface);
-      const shouldUseApi =
-        Boolean(translationStatus?.configured) &&
-        (Boolean(payload.preferApi) ||
-          preferences.translationMode === 'always_api' ||
-          !localRes.found);
+      const existing =
+        vocabLookupMap.get(normalizeWordKey(localRes.word)) ||
+        vocabLookupMap.get(normalizeWordKey(payload.surface));
+      if (!payload.preferApi && existing?.ai_cache) {
+        const permCached = buildLookupFromVocabAiCache(localRes, existing, payload.sentence || '');
+        if (permCached) {
+          return permCached;
+        }
+      }
 
+      const shouldUseApi = Boolean(translationStatus?.configured);
       if (!shouldUseApi) {
         return localRes;
       }
@@ -582,7 +632,7 @@ export default function App() {
       }
       return merged;
     },
-    [translationStatus?.configured, preferences.translationMode],
+    [translationStatus?.configured, vocabLookupMap],
   );
 
   const handleUpdateWord = useCallback(
@@ -595,20 +645,94 @@ export default function App() {
         pos?: string;
         status?: VocabStatus;
         subject?: string;
+        ai_cache?: VocabEntry['ai_cache'];
+        clear_ai_cache?: boolean;
       },
     ) => {
+      if (patch.word || patch.clear_ai_cache) {
+        const oldEntry = words.find((w) => w.id === id);
+        if (oldEntry) {
+          persistentCacheRef.current?.deleteByWord(normalizeWordKey(oldEntry.word));
+        }
+      }
       const updated = await studyhubApi.updateVocab(id, patch);
       setWords(updated.words);
       void studyhubApi.getStatus().then(setFolderStatus);
     },
-    [],
+    [words],
   );
 
-  const handleDeleteWord = useCallback(async (id: string) => {
-    const updated = await studyhubApi.deleteVocab(id);
-    setWords(updated.words);
-    void studyhubApi.getStatus().then(setFolderStatus);
-  }, []);
+  const handleDeleteWord = useCallback(
+    async (id: string) => {
+      const target = words.find((w) => w.id === id);
+      if (target) {
+        persistentCacheRef.current?.deleteByWord(normalizeWordKey(target.word));
+        failedAutoTranslateIdsRef.current.delete(id);
+      }
+      const updated = await studyhubApi.deleteVocab(id);
+      setWords(updated.words);
+      void studyhubApi.getStatus().then(setFolderStatus);
+    },
+    [words],
+  );
+
+  // 后台自动为未缓存过模型翻译的单词执行一次模型翻译并永久缓存（含无原句时自动生成例句）
+  useEffect(() => {
+    if (!translationStatus?.configured || loading) return;
+    if (autoTranslatingIdRef.current) return;
+
+    const nextWord = words.find(
+      (w) => !w.ai_cache && !failedAutoTranslateIdsRef.current.has(w.id),
+    );
+    if (!nextWord) return;
+
+    let cancelled = false;
+    const timer = window.setTimeout(async () => {
+      if (cancelled || autoTranslatingIdRef.current) return;
+      autoTranslatingIdRef.current = nextWord.id;
+      setAutoTranslatingWordId(nextWord.id);
+      try {
+        const res = await studyhubApi.translateWord({
+          surface: nextWord.word,
+          sentence: nextWord.context,
+          subject: nextWord.subject,
+        });
+        if (cancelled) return;
+        const aiCache = vocabAiCacheFromLookup(res, translationStatus.model);
+        const patch: Parameters<typeof studyhubApi.updateVocab>[1] = {
+          ai_cache: aiCache,
+        };
+        if (!nextWord.meaning_zh.trim() && res.meaning_zh.trim()) {
+          patch.meaning_zh = res.meaning_zh.trim();
+        }
+        if (!nextWord.phonetic.trim() && res.phonetic.trim()) {
+          patch.phonetic = res.phonetic.trim();
+        }
+        if (!nextWord.pos.trim() && res.pos.trim()) {
+          patch.pos = res.pos.trim();
+        }
+        if (!nextWord.context.trim() && res.example_en?.trim()) {
+          patch.context = res.example_en.trim();
+        }
+        const updated = await studyhubApi.updateVocab(nextWord.id, patch);
+        if (!cancelled) {
+          setWords(updated.words);
+        }
+      } catch {
+        failedAutoTranslateIdsRef.current.add(nextWord.id);
+      } finally {
+        autoTranslatingIdRef.current = null;
+        if (!cancelled) {
+          setAutoTranslatingWordId(null);
+        }
+      }
+    }, 300);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [words, loading, translationStatus?.configured, translationStatus?.model]);
 
   const handleRecordReview = useCallback(async (id: string, remembered: boolean) => {
     const updated = await studyhubApi.recordReview(id, remembered);
@@ -882,6 +1006,8 @@ export default function App() {
                 words={words}
                 vocabLookupMap={vocabLookupMap}
                 translationConfigured={Boolean(translationStatus?.configured)}
+                translationModel={translationStatus?.model}
+                autoTranslatingWordId={autoTranslatingWordId}
                 speechAccent={preferences.speechAccent}
                 speechRate={preferences.speechRate}
                 speechEngine={preferences.speechEngine}

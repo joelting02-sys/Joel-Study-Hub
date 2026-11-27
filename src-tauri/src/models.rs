@@ -7,6 +7,32 @@ pub struct VocabReview {
     pub interval_days: i64,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct VocabAiCache {
+    #[serde(default)]
+    pub meaning_zh: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_zh: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub example_en: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plain_zh: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub alternatives: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub synonyms: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub example_en: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub phonetic: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pos: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub cached_at: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VocabEntry {
     pub id: String,
@@ -32,6 +58,8 @@ pub struct VocabEntry {
     #[serde(default = "default_lookup_count")]
     pub lookup_count: u64,
     pub review: VocabReview,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ai_cache: Option<VocabAiCache>,
 }
 
 fn default_status_learning() -> String {
@@ -69,6 +97,8 @@ pub struct AddVocabInput {
     pub source: Option<String>,
     #[serde(default)]
     pub subject: Option<String>,
+    #[serde(default)]
+    pub ai_cache: Option<VocabAiCache>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -87,6 +117,10 @@ pub struct UpdateVocabPatch {
     pub subject: Option<String>,
     #[serde(default)]
     pub context: Option<String>,
+    #[serde(default)]
+    pub ai_cache: Option<VocabAiCache>,
+    #[serde(default)]
+    pub clear_ai_cache: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -257,6 +291,8 @@ pub struct LookupResult {
     pub meaning_zh: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_zh: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub example_en: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub plain_zh: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

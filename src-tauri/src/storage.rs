@@ -465,6 +465,11 @@ impl StudyHubStorage {
                 if let Some(c) = &patch.context {
                     w.context = c.trim().to_string();
                 }
+                if patch.clear_ai_cache {
+                    w.ai_cache = None;
+                } else if let Some(cache) = &patch.ai_cache {
+                    w.ai_cache = Some(cache.clone());
+                }
             }
         }
         self.write_vocab_file(&current)?;

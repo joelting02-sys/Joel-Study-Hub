@@ -83,6 +83,12 @@ pub fn add_or_increment_vocab(
         if existing.pos.is_empty() {
             existing.pos = input.pos.as_deref().unwrap_or("").trim().to_string();
         }
+        if existing.context.is_empty() {
+            existing.context = input.context.as_deref().unwrap_or("").trim().to_string();
+        }
+        if existing.ai_cache.is_none() && input.ai_cache.is_some() {
+            existing.ai_cache = input.ai_cache.clone();
+        }
         let cloned = existing.clone();
         return (words, cloned, false);
     }
@@ -109,6 +115,7 @@ pub fn add_or_increment_vocab(
             next_review: add_days_to_ymd(today_ymd, 1),
             interval_days: 1,
         },
+        ai_cache: input.ai_cache.clone(),
     };
 
     let mut next_words = Vec::with_capacity(words.len() + 1);
@@ -151,6 +158,7 @@ pub fn merge_inbox_words(
                     .clone()
                     .unwrap_or_else(|| "未分类".to_string()),
             ),
+            ai_cache: None,
         };
         let (next_words, _, _) = add_or_increment_vocab(current, &input, today_ymd, now_iso);
         current = next_words;
@@ -254,6 +262,7 @@ mod tests {
             context: None,
             source: None,
             subject: Some("ICT".to_string()),
+            ai_cache: None,
         };
         let (words, entry, is_new) =
             add_or_increment_vocab(vec![], &input, "2026-05-01", "2026-05-01T00:00:00Z");
