@@ -14,6 +14,8 @@ pub struct VocabAiCache {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_zh: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub example_en: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub plain_zh: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub alternatives: Vec<String>,
@@ -289,6 +291,8 @@ pub struct LookupResult {
     pub meaning_zh: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_zh: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub example_en: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub plain_zh: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
