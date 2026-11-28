@@ -116,6 +116,28 @@ export function mergeVocabIntoLocalLookup(
   return localResult;
 }
 
+export function isCorruptedTranslationText(raw?: string): boolean {
+  const trimmed = (raw || '').trim();
+  if (!trimmed) return false;
+  return (
+    trimmed.startsWith('{') ||
+    trimmed.startsWith('[') ||
+    trimmed.includes('"word":') ||
+    trimmed.includes('"meaning_zh":') ||
+    trimmed.includes('"phonetic":') ||
+    trimmed.includes('"context_zh":') ||
+    trimmed.includes('"plain_zh":')
+  );
+}
+
+export function isCorruptedLookupResult(result?: LookupResult | null): boolean {
+  if (!result) return false;
+  return (
+    isCorruptedTranslationText(result.meaning_zh) ||
+    isCorruptedTranslationText(result.context_zh)
+  );
+}
+
 export interface StorageLike {
   getItem(key: string): string | null;
   setItem(key: string, value: string): void;
@@ -158,6 +180,7 @@ export class PersistentTranslationCache {
   private load(): Map<string, LookupResult> {
     const map = new Map<string, LookupResult>();
     if (!this.storage) return map;
+    let droppedCorrupted = false;
     try {
       const raw = this.storage.getItem(this.storageKey);
       if (!raw) return map;
@@ -165,12 +188,24 @@ export class PersistentTranslationCache {
       if (Array.isArray(parsed)) {
         for (const item of parsed) {
           if (Array.isArray(item) && typeof item[0] === 'string' && item[1] && typeof item[1] === 'object') {
-            map.set(item[0], item[1] as LookupResult);
+            const val = item[1] as LookupResult;
+            if (isCorruptedLookupResult(val)) {
+              droppedCorrupted = true;
+              continue;
+            }
+            map.set(item[0], val);
           }
         }
       }
     } catch {
       // ignore corrupted cache
+    }
+    if (droppedCorrupted) {
+      try {
+        this.storage.setItem(this.storageKey, JSON.stringify(Array.from(map.entries())));
+      } catch {
+        // ignore storage quota errors
+      }
     }
     return map;
   }
@@ -211,6 +246,7 @@ export class PersistentTranslationCache {
   }
 
   set(model: string, wordKey: string, sentence: string, result: LookupResult): void {
+    if (isCorruptedLookupResult(result)) return;
     const eKey = this.exactKey(model, wordKey, sentence);
     const wKey = this.wordFallbackKey(model, wordKey);
     this.touch(eKey, { ...result });
@@ -266,6 +302,12 @@ export function buildLookupFromVocabAiCache(
 ): LookupResult | null {
   const cache = entry.ai_cache;
   if (!cache || !cache.meaning_zh.trim()) return null;
+  if (isCorruptedTranslationText(cache.meaning_zh) || isCorruptedTranslationText(cache.context_zh)) {
+    return null;
+  }
+  const cleanEntryMeaning = isCorruptedTranslationText(entry.meaning_zh)
+    ? ''
+    : entry.meaning_zh.trim();
 
   const normSentence = sentence.trim().replace(/\s+/g, ' ').toLowerCase();
   const normEntryContext = (entry.context || '').trim().replace(/\s+/g, ' ').toLowerCase();
@@ -276,7 +318,7 @@ export function buildLookupFromVocabAiCache(
     surface: base.surface || entry.word,
     phonetic: cache.phonetic || entry.phonetic || base.phonetic,
     pos: cache.pos || entry.pos || base.pos,
-    meaning_zh: entry.meaning_zh.trim() || cache.meaning_zh.trim(),
+    meaning_zh: cleanEntryMeaning || cache.meaning_zh.trim(),
     ...(sameContext && cache.context_zh ? { context_zh: cache.context_zh } : {}),
     ...(cache.plain_zh ? { plain_zh: cache.plain_zh } : {}),
     ...(cache.alternatives ? { alternatives: cache.alternatives } : {}),

@@ -37,6 +37,8 @@ import { mergeLookupEnrichment } from './lib/lookupHelpers';
 import {
   buildLookupFromVocabAiCache,
   hashSentence,
+  isCorruptedLookupResult,
+  isCorruptedTranslationText,
   mergeVocabIntoLocalLookup,
   PersistentTranslationCache,
   shouldSkipAutoApiLookup,
@@ -439,7 +441,12 @@ export default function App() {
           finalResult = apiResult;
 
           const alreadyInVocab = vocabLookupMap.get(normalizeWordKey(apiResult.word));
-          if (preferences.autoAddTranslatedVocab && !alreadyInVocab && apiResult.meaning_zh.trim()) {
+          if (
+            preferences.autoAddTranslatedVocab &&
+            !alreadyInVocab &&
+            apiResult.meaning_zh.trim() &&
+            !isCorruptedLookupResult(apiResult)
+          ) {
             try {
               const saved = await studyhubApi.addVocab({
                 word: apiResult.word,
@@ -457,7 +464,14 @@ export default function App() {
             } catch {
               // 自动入库失败时仍保留翻译展示，允许用户手动点击加入
             }
-          } else if (alreadyInVocab && !alreadyInVocab.ai_cache && apiResult.meaning_zh.trim()) {
+          } else if (
+            alreadyInVocab &&
+            (!alreadyInVocab.ai_cache ||
+              isCorruptedTranslationText(alreadyInVocab.ai_cache.meaning_zh) ||
+              isCorruptedTranslationText(alreadyInVocab.ai_cache.context_zh)) &&
+            apiResult.meaning_zh.trim() &&
+            !isCorruptedLookupResult(apiResult)
+          ) {
             try {
               const updated = await studyhubApi.updateVocab(alreadyInVocab.id, {
                 ai_cache: vocabAiCacheFromLookup(apiResult, model),
@@ -532,7 +546,12 @@ export default function App() {
 
       let autoSaved = false;
       const alreadyInVocab = vocabLookupMap.get(normalizeWordKey(apiResult.word));
-      if (preferences.autoAddTranslatedVocab && !alreadyInVocab && apiResult.meaning_zh.trim()) {
+      if (
+        preferences.autoAddTranslatedVocab &&
+        !alreadyInVocab &&
+        apiResult.meaning_zh.trim() &&
+        !isCorruptedLookupResult(apiResult)
+      ) {
         try {
           const saved = await studyhubApi.addVocab({
             word: apiResult.word,
@@ -550,7 +569,11 @@ export default function App() {
         } catch {
           // 忽略自动入库失败
         }
-      } else if (alreadyInVocab && apiResult.meaning_zh.trim()) {
+      } else if (
+        alreadyInVocab &&
+        apiResult.meaning_zh.trim() &&
+        !isCorruptedLookupResult(apiResult)
+      ) {
         try {
           const updated = await studyhubApi.updateVocab(alreadyInVocab.id, {
             ai_cache: vocabAiCacheFromLookup(apiResult, model),
@@ -682,7 +705,11 @@ export default function App() {
     if (autoTranslatingIdRef.current) return;
 
     const nextWord = words.find(
-      (w) => !w.ai_cache && !failedAutoTranslateIdsRef.current.has(w.id),
+      (w) =>
+        (!w.ai_cache ||
+          isCorruptedTranslationText(w.ai_cache.meaning_zh) ||
+          isCorruptedTranslationText(w.ai_cache.context_zh)) &&
+        !failedAutoTranslateIdsRef.current.has(w.id),
     );
     if (!nextWord) return;
 
@@ -698,11 +725,18 @@ export default function App() {
           subject: nextWord.subject,
         });
         if (cancelled) return;
+        if (isCorruptedLookupResult(res)) {
+          failedAutoTranslateIdsRef.current.add(nextWord.id);
+          return;
+        }
         const aiCache = vocabAiCacheFromLookup(res, translationStatus.model);
         const patch: Parameters<typeof studyhubApi.updateVocab>[1] = {
           ai_cache: aiCache,
         };
-        if (!nextWord.meaning_zh.trim() && res.meaning_zh.trim()) {
+        if (
+          (!nextWord.meaning_zh.trim() || isCorruptedTranslationText(nextWord.meaning_zh)) &&
+          res.meaning_zh.trim()
+        ) {
           patch.meaning_zh = res.meaning_zh.trim();
         }
         if (!nextWord.phonetic.trim() && res.phonetic.trim()) {

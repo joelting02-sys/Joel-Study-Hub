@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import {
   buildLookupFromVocabAiCache,
   isBasicStopWord,
+  isCorruptedLookupResult,
+  isCorruptedTranslationText,
   mergeVocabIntoLocalLookup,
   PersistentTranslationCache,
   shouldSkipAutoApiLookup,
@@ -238,4 +240,69 @@ test('deleteByWord purges all entries for a deleted word and vocab ai_cache help
   const diffCtx = buildLookupFromVocabAiCache(baseLocal, entry, 'Another sentence entirely.');
   assert.equal(diffCtx?.context_zh, undefined);
   assert.equal(diffCtx?.plain_zh, '资产快速换成现金的能力');
+});
+
+test('PersistentTranslationCache and buildLookupFromVocabAiCache reject and purge corrupted JSON fragments', () => {
+  const brokenRaw = '{"word":"subsidiary","phonetic":"səbˈsɪdiəri","p';
+  assert.equal(isCorruptedTranslationText(brokenRaw), true);
+  assert.equal(isCorruptedTranslationText('子公司；附属公司'), false);
+
+  const storage = createMemoryStorage();
+  storage.setItem(
+    'test_corrupt',
+    JSON.stringify([
+      [
+        'e|m|subsidiary|',
+        { word: 'subsidiary', surface: 'subsidiary', phonetic: '', pos: '', meaning_zh: brokenRaw, source: 'api', found: true },
+      ],
+      [
+        'e|m|margin|',
+        { word: 'margin', surface: 'margin', phonetic: '', pos: '', meaning_zh: '利润率', source: 'api', found: true },
+      ],
+    ]),
+  );
+
+  const cache = new PersistentTranslationCache(storage, 'test_corrupt', 10);
+  assert.equal(cache.getExact('m', 'subsidiary', ''), undefined);
+  assert.equal(cache.getExact('m', 'margin', '')?.meaning_zh, '利润率');
+
+  const brokenLookup: LookupResult = {
+    word: 'subsidiary',
+    surface: 'subsidiary',
+    phonetic: '',
+    pos: '',
+    meaning_zh: brokenRaw,
+    source: 'api',
+    found: true,
+  };
+  assert.equal(isCorruptedLookupResult(brokenLookup), true);
+  cache.set('m', 'subsidiary', '', brokenLookup);
+  assert.equal(cache.getExact('m', 'subsidiary', ''), undefined);
+
+  const poisonedEntry: VocabEntry = {
+    id: 'v-bad',
+    word: 'subsidiary',
+    meaning_zh: '子公司',
+    phonetic: '',
+    pos: '',
+    context: '',
+    source: 'Quiz',
+    subject: 'BE',
+    status: 'learning',
+    added_at: '2026-11-28T00:00:00Z',
+    learned_at: null,
+    lookup_count: 1,
+    review: { next_review: '2026-11-28', interval_days: 1 },
+    ai_cache: {
+      meaning_zh: brokenRaw,
+      cached_at: '2026-11-28T00:00:00Z',
+    },
+  };
+  assert.equal(
+    buildLookupFromVocabAiCache(
+      { word: 'subsidiary', surface: 'subsidiary', phonetic: '', pos: '', meaning_zh: '子公司', source: 'ecdict', found: true },
+      poisonedEntry,
+    ),
+    null,
+  );
 });

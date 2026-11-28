@@ -32,7 +32,7 @@ interface ResolvedTranslatorConfig {
   model: string;
 }
 
-const REQUEST_TIMEOUT_MS = 15_000;
+const REQUEST_TIMEOUT_MS = 20_000;
 const CONFIG_FILE_PATH = path.resolve(process.cwd(), 'studyhub-config.json');
 
 function isPrivateOrRestrictedIpv4(ip: string): boolean {
@@ -437,6 +437,154 @@ function extractFirstJsonObject(raw: string): Record<string, unknown> | null {
   return null;
 }
 
+function readJsonStringLiteral(s: string, start: number): [string, number] | null {
+  if (s[start] !== '"') return null;
+  let i = start + 1;
+  let escaped = false;
+  while (i < s.length) {
+    const ch = s[i];
+    if (escaped) {
+      escaped = false;
+      i += 1;
+      continue;
+    }
+    if (ch === '\\') {
+      escaped = true;
+      i += 1;
+      continue;
+    }
+    if (ch === '"') {
+      try {
+        const parsed = JSON.parse(s.slice(start, i + 1));
+        if (typeof parsed === 'string') {
+          return [parsed, i + 1];
+        }
+      } catch {
+        return null;
+      }
+      return null;
+    }
+    i += 1;
+  }
+  return null;
+}
+
+function readJsonStringArray(s: string, start: number): [string[], number] | null {
+  if (s[start] !== '[') return null;
+  let i = start + 1;
+  let inStr = false;
+  let escaped = false;
+  while (i < s.length) {
+    const ch = s[i];
+    if (inStr) {
+      if (escaped) {
+        escaped = false;
+      } else if (ch === '\\') {
+        escaped = true;
+      } else if (ch === '"') {
+        inStr = false;
+      }
+    } else if (ch === '"') {
+      inStr = true;
+    } else if (ch === ']') {
+      try {
+        const parsed = JSON.parse(s.slice(start, i + 1));
+        if (Array.isArray(parsed) && parsed.every((item) => typeof item === 'string')) {
+          return [parsed as string[], i + 1];
+        }
+      } catch {
+        return null;
+      }
+      return null;
+    }
+    i += 1;
+  }
+  return null;
+}
+
+function extractPartialJsonObject(raw: string): Record<string, unknown> | null {
+  const cleaned = stripMarkdownFences(raw);
+  const start = cleaned.indexOf('{');
+  if (start === -1) return null;
+  const out: Record<string, unknown> = {};
+  let i = start + 1;
+
+  while (i < cleaned.length) {
+    while (i < cleaned.length && /[\s,}]/.test(cleaned[i])) {
+      i += 1;
+    }
+    if (i >= cleaned.length) break;
+    if (cleaned[i] !== '"') {
+      i += 1;
+      continue;
+    }
+    const keyRes = readJsonStringLiteral(cleaned, i);
+    if (!keyRes) break;
+    const [key, afterKey] = keyRes;
+    i = afterKey;
+    while (i < cleaned.length && /\s/.test(cleaned[i])) i += 1;
+    if (i >= cleaned.length || cleaned[i] !== ':') break;
+    i += 1;
+    while (i < cleaned.length && /\s/.test(cleaned[i])) i += 1;
+    if (i >= cleaned.length) break;
+
+    if (cleaned[i] === '"') {
+      const valRes = readJsonStringLiteral(cleaned, i);
+      if (!valRes) break;
+      out[key] = valRes[0];
+      i = valRes[1];
+    } else if (cleaned[i] === '[') {
+      const arrRes = readJsonStringArray(cleaned, i);
+      if (!arrRes) break;
+      out[key] = arrRes[0];
+      i = arrRes[1];
+    } else {
+      break;
+    }
+  }
+
+  return Object.keys(out).length > 0 ? out : null;
+}
+
+function looksLikeJsonFragment(raw: string): boolean {
+  const trimmed = raw.trim();
+  if (!trimmed) return false;
+  return (
+    trimmed.startsWith('{') ||
+    trimmed.startsWith('[') ||
+    trimmed.includes('"word"') ||
+    trimmed.includes('"meaning_zh"') ||
+    trimmed.includes('"phonetic"') ||
+    trimmed.includes('"context_zh"') ||
+    trimmed.includes('"plain_zh"')
+  );
+}
+
+export function isChatResponseIncomplete(payload: unknown): boolean {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return false;
+  }
+  const choices = (payload as Record<string, unknown>).choices;
+  if (!Array.isArray(choices) || choices.length === 0) {
+    return false;
+  }
+  const first = choices[0] as Record<string, unknown>;
+  if (typeof first.finish_reason === 'string' && first.finish_reason.toLowerCase() === 'length') {
+    return true;
+  }
+  const msg = first.message as Record<string, unknown> | undefined;
+  const content =
+    typeof msg?.content === 'string'
+      ? msg.content
+      : typeof first.text === 'string'
+        ? first.text
+        : '';
+  if (!content.trim()) {
+    return true;
+  }
+  return extractFirstJsonObject(content) === null;
+}
+
 function pickString(obj: Record<string, unknown>, keys: string[]): string {
   for (const key of keys) {
     const val = obj[key];
@@ -523,7 +671,7 @@ export function parseModelTranslationPayload(
   let plainTextFallback = '';
 
   if (typeof rawPayload === 'string') {
-    obj = extractFirstJsonObject(rawPayload);
+    obj = extractFirstJsonObject(rawPayload) ?? extractPartialJsonObject(rawPayload);
     plainTextFallback = stripMarkdownFences(rawPayload);
   } else if (rawPayload && typeof rawPayload === 'object' && !Array.isArray(rawPayload)) {
     const record = rawPayload as Record<string, unknown>;
@@ -537,13 +685,13 @@ export function parseModelTranslationPayload(
             ? first.text
             : '';
       if (content) {
-        obj = extractFirstJsonObject(content);
+        obj = extractFirstJsonObject(content) ?? extractPartialJsonObject(content);
         plainTextFallback = stripMarkdownFences(content);
       }
     } else if (record.output || record.output_text) {
       const respText = extractTextFromResponsesApi(record);
       if (respText) {
-        obj = extractFirstJsonObject(respText);
+        obj = extractFirstJsonObject(respText) ?? extractPartialJsonObject(respText);
         plainTextFallback = stripMarkdownFences(respText);
       }
     } else if (record.data && typeof record.data === 'object' && !Array.isArray(record.data)) {
@@ -620,11 +768,14 @@ export function parseModelTranslationPayload(
     );
   }
 
-  if (!meaningZh && plainTextFallback) {
+  if (!meaningZh && plainTextFallback && !looksLikeJsonFragment(plainTextFallback)) {
     meaningZh = plainTextFallback.replace(/\s+/g, ' ').slice(0, 200).trim();
   }
 
   if (!meaningZh) {
+    if (looksLikeJsonFragment(plainTextFallback)) {
+      throw new Error('翻译接口返回的内容被截断或不完整，请重试');
+    }
     throw new Error('翻译接口返回内容为空，无法解析中文释义');
   }
 
@@ -803,7 +954,10 @@ export async function translateWordWithApi(
   const reasoningEffort = dedicatedTranslator ? undefined : pickFastReasoningEffort(config.model);
   const shortSentence = sentence.slice(0, 240);
 
-  const buildChatPayload = (withReasoningControl: boolean): Record<string, unknown> => {
+  const buildChatPayload = (
+    withReasoningControl: boolean,
+    maxTokensOverride?: number,
+  ): Record<string, unknown> => {
     if (dedicatedTranslator) {
       return {
         model: config.model,
@@ -825,7 +979,7 @@ export async function translateWordWithApi(
         {
           role: 'system',
           content:
-            '英汉学习词典。先检查输入英文有无拼写错误：若拼错必须在word中纠正为标准拼写并在corrected_from填原错词，无错留空。若用户未提供原句，必须在example_en生成1句自然简洁的英文例句并在context_zh给该例句中文译文；若已提供原句，example_en留空。只返回合法JSON：{"word":"正确词原形或短语","corrected_from":"原错拼词(无错留空)","phonetic":"音标(无斜杠)","pos":"词性","example_en":"无原句时生成的英文例句(有原句留空)","context_zh":"原句或例句的中文译义","meaning_zh":"2-4个核心中文义项，；分隔","plain_zh":"一句大白话通俗解释","alternatives":["2-3个直观中文说法"],"synonyms":["2-3个英文同义词"]}',
+            '英汉学习词典。先检查拼写：若拼错在word纠错并在corrected_from填原错词，无错留空。若用户提供原句(句:)，example_en留空，context_zh只给该词在原句中的简短语境中文义(<=12字，不要整句翻译)。若未提供原句，在example_en生成1句简洁英文例句(<=15词)并在context_zh给该例句中文译义。只返回完整合法单行JSON：{"word":"正确词原形或短语","corrected_from":"","phonetic":"音标(无斜杠)","pos":"词性","example_en":"","context_zh":"简短语境义或例句译文","meaning_zh":"2-4个核心中文义项，；分隔","plain_zh":"一句大白话解释","alternatives":["2个直观中文说法"],"synonyms":["2个英文同义词"]}',
         },
         {
           role: 'user',
@@ -836,21 +990,58 @@ export async function translateWordWithApi(
     if (withReasoningControl && reasoningEffort) {
       payload.reasoning_effort = reasoningEffort;
       if (reasoningEffort === 'none') {
-        payload.max_tokens = 320;
+        payload.max_tokens = maxTokensOverride ?? 800;
       } else if (reasoningEffort === 'low') {
-        payload.max_tokens = 400;
+        payload.max_tokens = maxTokensOverride ?? 1600;
       }
+    } else if (maxTokensOverride !== undefined) {
+      payload.max_tokens = maxTokensOverride;
     }
     return payload;
   };
 
-  let chatResp = await postJsonWithTimeout(chatUrl, headers, buildChatPayload(true), fetchImpl);
-  if (!chatResp.ok && reasoningEffort && (chatResp.status === 400 || chatResp.status === 422)) {
+  let usedReasoningControl = Boolean(reasoningEffort);
+  let chatResp = await postJsonWithTimeout(
+    chatUrl,
+    headers,
+    buildChatPayload(usedReasoningControl),
+    fetchImpl,
+  );
+  if (!chatResp.ok && usedReasoningControl && (chatResp.status === 400 || chatResp.status === 422)) {
+    usedReasoningControl = false;
     chatResp = await postJsonWithTimeout(chatUrl, headers, buildChatPayload(false), fetchImpl);
   }
   if (!chatResp.ok) {
     const snippet = chatResp.rawText.slice(0, 240);
     throw new Error(`翻译接口返回 HTTP ${chatResp.status}${snippet ? `: ${snippet}` : ''}`);
+  }
+
+  if (!dedicatedTranslator && isChatResponseIncomplete(chatResp.payload)) {
+    try {
+      let retryResp = await postJsonWithTimeout(
+        chatUrl,
+        headers,
+        buildChatPayload(usedReasoningControl, 2400),
+        fetchImpl,
+      );
+      if (
+        !retryResp.ok &&
+        usedReasoningControl &&
+        (retryResp.status === 400 || retryResp.status === 422)
+      ) {
+        retryResp = await postJsonWithTimeout(
+          chatUrl,
+          headers,
+          buildChatPayload(false, 2400),
+          fetchImpl,
+        );
+      }
+      if (retryResp.ok) {
+        return parseModelTranslationPayload(retryResp.payload, surface);
+      }
+    } catch {
+      // 重试失败时回退解析首轮响应（若 meaning_zh 完整可挽救，否则抛截断错误）
+    }
   }
 
   return parseModelTranslationPayload(chatResp.payload, surface);

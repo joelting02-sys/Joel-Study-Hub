@@ -14,7 +14,7 @@ use std::path::Path;
 use std::sync::OnceLock;
 use std::time::Duration;
 
-const REQUEST_TIMEOUT_SECS: u64 = 15;
+const REQUEST_TIMEOUT_SECS: u64 = 20;
 static SHARED_HTTP_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
 
 fn shared_http_client() -> Result<&'static reqwest::Client, String> {
@@ -518,6 +518,175 @@ fn extract_first_json_object(raw: &str) -> Option<serde_json::Map<String, Value>
     None
 }
 
+fn read_json_string_literal(s: &str, start: usize) -> Option<(String, usize)> {
+    let bytes = s.as_bytes();
+    if bytes.get(start).copied() != Some(b'"') {
+        return None;
+    }
+    let mut i = start + 1;
+    let mut escaped = false;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if escaped {
+            escaped = false;
+            i += 1;
+            continue;
+        }
+        if b == b'\\' {
+            escaped = true;
+            i += 1;
+            continue;
+        }
+        if b == b'"' {
+            let slice = &s[start..=i];
+            if let Ok(parsed) = serde_json::from_str::<String>(slice) {
+                return Some((parsed, i + 1));
+            }
+            return None;
+        }
+        i += 1;
+    }
+    None
+}
+
+fn read_json_string_array(s: &str, start: usize) -> Option<(Vec<Value>, usize)> {
+    let bytes = s.as_bytes();
+    if bytes.get(start).copied() != Some(b'[') {
+        return None;
+    }
+    let mut i = start + 1;
+    let mut in_str = false;
+    let mut escaped = false;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if in_str {
+            if escaped {
+                escaped = false;
+            } else if b == b'\\' {
+                escaped = true;
+            } else if b == b'"' {
+                in_str = false;
+            }
+        } else if b == b'"' {
+            in_str = true;
+        } else if b == b']' {
+            let slice = &s[start..=i];
+            if let Ok(items) = serde_json::from_str::<Vec<String>>(slice) {
+                return Some((items.into_iter().map(Value::String).collect(), i + 1));
+            }
+            return None;
+        }
+        i += 1;
+    }
+    None
+}
+
+fn extract_partial_json_object(raw: &str) -> Option<serde_json::Map<String, Value>> {
+    let cleaned = strip_markdown_fences(raw);
+    let start = cleaned.find('{')?;
+    let mut map = serde_json::Map::new();
+    let bytes = cleaned.as_bytes();
+    let mut i = start + 1;
+
+    while i < bytes.len() {
+        while i < bytes.len()
+            && matches!(bytes[i], b' ' | b'\t' | b'\r' | b'\n' | b',' | b'}')
+        {
+            i += 1;
+        }
+        if i >= bytes.len() {
+            break;
+        }
+        if bytes[i] != b'"' {
+            i += 1;
+            continue;
+        }
+        let Some((key, after_key)) = read_json_string_literal(&cleaned, i) else {
+            break;
+        };
+        i = after_key;
+        while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        if i >= bytes.len() || bytes[i] != b':' {
+            break;
+        }
+        i += 1;
+        while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        if i >= bytes.len() {
+            break;
+        }
+        if bytes[i] == b'"' {
+            if let Some((val, after_val)) = read_json_string_literal(&cleaned, i) {
+                map.insert(key, Value::String(val));
+                i = after_val;
+            } else {
+                break;
+            }
+        } else if bytes[i] == b'[' {
+            if let Some((arr, after_arr)) = read_json_string_array(&cleaned, i) {
+                map.insert(key, Value::Array(arr));
+                i = after_arr;
+            } else {
+                break;
+            }
+        } else {
+            break;
+        }
+    }
+
+    if map.is_empty() {
+        None
+    } else {
+        Some(map)
+    }
+}
+
+fn looks_like_json_fragment(raw: &str) -> bool {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    trimmed.starts_with('{')
+        || trimmed.starts_with('[')
+        || trimmed.contains("\"word\"")
+        || trimmed.contains("\"meaning_zh\"")
+        || trimmed.contains("\"phonetic\"")
+        || trimmed.contains("\"context_zh\"")
+        || trimmed.contains("\"plain_zh\"")
+}
+
+pub fn is_chat_response_incomplete(payload: &Value) -> bool {
+    let Some(first) = payload
+        .get("choices")
+        .and_then(|v| v.as_array())
+        .and_then(|arr| arr.first())
+    else {
+        return false;
+    };
+    if first
+        .get("finish_reason")
+        .and_then(|v| v.as_str())
+        .map(|s| s.eq_ignore_ascii_case("length"))
+        .unwrap_or(false)
+    {
+        return true;
+    }
+    let content = first
+        .get("message")
+        .and_then(|m| m.get("content"))
+        .and_then(|c| c.as_str())
+        .or_else(|| first.get("text").and_then(|t| t.as_str()))
+        .unwrap_or("")
+        .trim();
+    if content.is_empty() {
+        return true;
+    }
+    extract_first_json_object(content).is_none()
+}
+
 fn pick_str(map: &serde_json::Map<String, Value>, keys: &[&str]) -> String {
     for k in keys {
         if let Some(val) = map.get(*k).and_then(|v| v.as_str()) {
@@ -635,7 +804,7 @@ pub fn parse_translation_payload(
     let mut plain_fallback = String::new();
 
     if let Some(s) = payload.as_str() {
-        obj = extract_first_json_object(s);
+        obj = extract_first_json_object(s).or_else(|| extract_partial_json_object(s));
         plain_fallback = strip_markdown_fences(s);
     } else if let Some(map) = payload.as_object() {
         if let Some(choices) = map.get("choices").and_then(|v| v.as_array()) {
@@ -647,14 +816,16 @@ pub fn parse_translation_payload(
                     .or_else(|| first.get("text").and_then(|t| t.as_str()))
                     .unwrap_or("");
                 if !content.is_empty() {
-                    obj = extract_first_json_object(content);
+                    obj = extract_first_json_object(content)
+                        .or_else(|| extract_partial_json_object(content));
                     plain_fallback = strip_markdown_fences(content);
                 }
             }
         } else if map.contains_key("output") || map.contains_key("output_text") {
             let text = extract_text_from_responses_api(map);
             if !text.is_empty() {
-                obj = extract_first_json_object(&text);
+                obj = extract_first_json_object(&text)
+                    .or_else(|| extract_partial_json_object(&text));
                 plain_fallback = strip_markdown_fences(&text);
             }
         } else if let Some(data_obj) = map.get("data").and_then(|v| v.as_object()) {
@@ -764,7 +935,8 @@ pub fn parse_translation_payload(
         );
     }
 
-    if meaning_zh.is_empty() && !plain_fallback.is_empty() {
+    if meaning_zh.is_empty() && !plain_fallback.is_empty() && !looks_like_json_fragment(&plain_fallback)
+    {
         meaning_zh = plain_fallback
             .split_whitespace()
             .collect::<Vec<_>>()
@@ -775,6 +947,9 @@ pub fn parse_translation_payload(
     }
 
     if meaning_zh.is_empty() {
+        if looks_like_json_fragment(&plain_fallback) {
+            return Err("翻译接口返回的内容被截断或不完整，请重试".to_string());
+        }
         return Err("翻译接口返回内容为空，无法解析中文释义".to_string());
     }
 
@@ -949,7 +1124,7 @@ pub async fn translate_word_with_api(
     };
     let short_sentence: String = sentence.chars().take(240).collect();
 
-    let build_chat_body = |with_reasoning_control: bool| -> Value {
+    let build_chat_body = |with_reasoning_control: bool, max_tokens_override: Option<u32>| -> Value {
         if dedicated_translator {
             return json!({
                 "model": config.model,
@@ -976,7 +1151,7 @@ pub async fn translate_word_with_api(
             json!([
                 {
                     "role": "system",
-                    "content": "英汉学习词典。先检查输入英文有无拼写错误：若拼错必须在word中纠正为标准拼写并在corrected_from填原错词，无错留空。若用户未提供原句，必须在example_en生成1句自然简洁的英文例句并在context_zh给该例句中文译文；若已提供原句，example_en留空。只返回合法JSON：{\"word\":\"正确词原形或短语\",\"corrected_from\":\"原错拼词(无错留空)\",\"phonetic\":\"音标(无斜杠)\",\"pos\":\"词性\",\"example_en\":\"无原句时生成的英文例句(有原句留空)\",\"context_zh\":\"原句或例句的中文译义\",\"meaning_zh\":\"2-4个核心中文义项，；分隔\",\"plain_zh\":\"一句大白话通俗解释\",\"alternatives\":[\"2-3个直观中文说法\"],\"synonyms\":[\"2-3个英文同义词\"]}"
+                    "content": "英汉学习词典。先检查拼写：若拼错在word纠错并在corrected_from填原错词，无错留空。若用户提供原句(句:)，example_en留空，context_zh只给该词在原句中的简短语境中文义(<=12字，不要整句翻译)。若未提供原句，在example_en生成1句简洁英文例句(<=15词)并在context_zh给该例句中文译义。只返回完整合法单行JSON：{\"word\":\"正确词原形或短语\",\"corrected_from\":\"\",\"phonetic\":\"音标(无斜杠)\",\"pos\":\"词性\",\"example_en\":\"\",\"context_zh\":\"简短语境义或例句译文\",\"meaning_zh\":\"2-4个核心中文义项，；分隔\",\"plain_zh\":\"一句大白话解释\",\"alternatives\":[\"2个直观中文说法\"],\"synonyms\":[\"2个英文同义词\"]}"
                 },
                 {
                     "role": "user",
@@ -988,11 +1163,15 @@ pub async fn translate_word_with_api(
             if let Some(effort) = reasoning_effort {
                 obj.insert("reasoning_effort".to_string(), json!(effort));
                 if effort == "none" {
-                    obj.insert("max_tokens".to_string(), json!(320));
+                    obj.insert("max_tokens".to_string(), json!(max_tokens_override.unwrap_or(800)));
                 } else if effort == "low" {
-                    obj.insert("max_tokens".to_string(), json!(400));
+                    obj.insert("max_tokens".to_string(), json!(max_tokens_override.unwrap_or(1600)));
                 }
+            } else if let Some(limit) = max_tokens_override {
+                obj.insert("max_tokens".to_string(), json!(limit));
             }
+        } else if let Some(limit) = max_tokens_override {
+            obj.insert("max_tokens".to_string(), json!(limit));
         }
         Value::Object(obj)
     };
@@ -1008,15 +1187,17 @@ pub async fn translate_word_with_api(
         req.send()
     };
 
-    let mut resp = send_chat(build_chat_body(true))
+    let mut used_reasoning_control = reasoning_effort.is_some();
+    let mut resp = send_chat(build_chat_body(used_reasoning_control, None))
         .await
         .map_err(|e| format!("调用翻译接口失败: {e}"))?;
 
     if !resp.status().is_success()
-        && reasoning_effort.is_some()
+        && used_reasoning_control
         && matches!(resp.status().as_u16(), 400 | 422)
     {
-        resp = send_chat(build_chat_body(false))
+        used_reasoning_control = false;
+        resp = send_chat(build_chat_body(false, None))
             .await
             .map_err(|e| format!("调用翻译接口失败: {e}"))?;
     }
@@ -1033,6 +1214,27 @@ pub async fn translate_word_with_api(
     }
 
     let payload = serde_json::from_str::<Value>(&raw_text).unwrap_or(Value::String(raw_text));
+    if !dedicated_translator && is_chat_response_incomplete(&payload) {
+        if let Ok(mut retry_resp) = send_chat(build_chat_body(used_reasoning_control, Some(2400))).await {
+            if !retry_resp.status().is_success()
+                && used_reasoning_control
+                && matches!(retry_resp.status().as_u16(), 400 | 422)
+            {
+                if let Ok(fallback_retry) = send_chat(build_chat_body(false, Some(2400))).await {
+                    retry_resp = fallback_retry;
+                }
+            }
+            if retry_resp.status().is_success() {
+                let retry_raw = retry_resp.text().await.unwrap_or_default();
+                let retry_payload =
+                    serde_json::from_str::<Value>(&retry_raw).unwrap_or(Value::String(retry_raw));
+                if let Ok(parsed) = parse_translation_payload(&retry_payload, &surface) {
+                    return Ok(parsed);
+                }
+            }
+        }
+    }
+
     parse_translation_payload(&payload, &surface)
 }
 
@@ -1113,5 +1315,33 @@ mod tests {
         );
         assert_eq!(rich.alternatives, vec!["股东", "利益方", "相关方"]);
         assert_eq!(rich.synonyms, vec!["shareholder", "interested party"]);
+
+        let salvaged_resp = json!({
+            "choices": [{
+                "finish_reason": "length",
+                "message": {
+                    "content": "{\"word\":\"business activity\",\"corrected_from\":\"\",\"phonetic\":\"'bɪznəs æk'tɪvəti\",\"pos\":\"名词短语\",\"example_en\":\"\",\"context_zh\":\"主营业务活动\",\"meaning_zh\":\"商业活动；业务经营；业务范围\",\"p"
+                }
+            }]
+        });
+        assert!(is_chat_response_incomplete(&salvaged_resp));
+        let salvaged = parse_translation_payload(&salvaged_resp, "business activity").unwrap();
+        assert_eq!(salvaged.word, "business activity");
+        assert_eq!(salvaged.phonetic, "'bɪznəs æk'tɪvəti");
+        assert_eq!(salvaged.pos, "名词短语");
+        assert_eq!(salvaged.context_zh.as_deref(), Some("主营业务活动"));
+        assert_eq!(salvaged.meaning_zh, "商业活动；业务经营；业务范围");
+        assert!(!salvaged.meaning_zh.contains('{'));
+
+        let broken_resp = json!({
+            "choices": [{
+                "finish_reason": "length",
+                "message": {
+                    "content": "{\"word\":\"business activity\",\"phonetic\":\"'bɪznəs"
+                }
+            }]
+        });
+        assert!(is_chat_response_incomplete(&broken_resp));
+        assert!(parse_translation_payload(&broken_resp, "business activity").is_err());
     }
 }

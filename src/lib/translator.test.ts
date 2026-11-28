@@ -407,9 +407,103 @@ test('pickFastReasoningEffort disables reasoning for DeepSeek Flash and retries 
     );
     assert.equal(attempts.length, 2);
     assert.equal(attempts[0].reasoning_effort, 'none');
-    assert.equal(attempts[0].max_tokens, 320);
+    assert.equal(attempts[0].max_tokens, 800);
     assert.equal('reasoning_effort' in attempts[1], false);
     assert.equal(res.meaning_zh, '利益相关者；股东');
+  } finally {
+    fs.rmSync(path.dirname(cfgPath), { recursive: true, force: true });
+  }
+});
+
+test('parseModelTranslationPayload salvages truncated JSON with complete meaning_zh and rejects broken fragments', async () => {
+  const { isChatResponseIncomplete } = await import('../../server/translator.ts');
+
+  const truncatedRecoverable = {
+    choices: [
+      {
+        finish_reason: 'length',
+        message: {
+          content:
+            '{"word":"business activity","corrected_from":"","phonetic":"\'bɪznəs æk\'tɪvəti","pos":"名词短语","example_en":"","context_zh":"主营业务活动","meaning_zh":"商业活动；业务经营；业务范围","p',
+        },
+      },
+    ],
+  };
+  assert.equal(isChatResponseIncomplete(truncatedRecoverable), true);
+  const salvaged = parseModelTranslationPayload(truncatedRecoverable, 'business activity');
+  assert.equal(salvaged.word, 'business activity');
+  assert.equal(salvaged.phonetic, "'bɪznəs æk'tɪvəti");
+  assert.equal(salvaged.pos, '名词短语');
+  assert.equal(salvaged.context_zh, '主营业务活动');
+  assert.equal(salvaged.meaning_zh, '商业活动；业务经营；业务范围');
+
+  const brokenUnrecoverable = {
+    choices: [
+      {
+        finish_reason: 'length',
+        message: {
+          content: '{"word":"business activity","phonetic":"\'bɪznəs',
+        },
+      },
+    ],
+  };
+  assert.equal(isChatResponseIncomplete(brokenUnrecoverable), true);
+  assert.throws(() => parseModelTranslationPayload(brokenUnrecoverable, 'business activity'));
+});
+
+test('translateWordWithApi silently retries once with higher max_tokens when first response is truncated', async () => {
+  const cfgPath = makeTempConfigPath('trunc-retry');
+  try {
+    const attempts: Array<Record<string, unknown>> = [];
+    const retryFetch: typeof fetch = async (_url, init) => {
+      const body = JSON.parse(String(init?.body || '{}')) as Record<string, unknown>;
+      attempts.push(body);
+      if (attempts.length === 1) {
+        return new Response(
+          JSON.stringify({
+            choices: [
+              {
+                finish_reason: 'length',
+                message: {
+                  content: '{"word":"business activity","phonetic":"\'bɪznəs',
+                },
+              },
+            ],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+      return new Response(
+        JSON.stringify({
+          choices: [
+            {
+              finish_reason: 'stop',
+              message: {
+                content:
+                  '{"word":"business activity","phonetic":"ˈbɪznəs ækˈtɪvəti","pos":"n. phr.","context_zh":"主营业务活动","meaning_zh":"商业活动；业务经营","plain_zh":"公司日常开展的经营活动"}',
+              },
+            },
+          ],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    };
+
+    const res = await translateWordWithApi(
+      { surface: 'business activity', sentence: 'Business activity includes selling goods.' },
+      {
+        TRANSLATE_API_BASE_URL: 'http://127.0.0.1:3425/v1',
+        TRANSLATE_API_KEY: 'sk-test',
+        TRANSLATE_API_MODEL: 'auto/minimax-m3.1-flash',
+      },
+      retryFetch,
+      cfgPath,
+    );
+    assert.equal(attempts.length, 2);
+    assert.equal(attempts[0].max_tokens, 1600);
+    assert.equal(attempts[1].max_tokens, 2400);
+    assert.equal(res.meaning_zh, '商业活动；业务经营');
+    assert.equal(res.context_zh, '主营业务活动');
   } finally {
     fs.rmSync(path.dirname(cfgPath), { recursive: true, force: true });
   }
